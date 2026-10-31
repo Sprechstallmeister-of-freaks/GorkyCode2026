@@ -95,6 +95,7 @@ class Event(BaseModel):
     updated_at: datetime
     source: str
     version: int
+    notified_at: datetime | None = None
 
 
 class EventList(BaseModel):
@@ -106,6 +107,20 @@ class SearchResponse(BaseModel):
     items: list[Event]
     total: int
     strategy: Literal["lexical_fuzzy"] = "lexical_fuzzy"
+
+
+class NotificationItem(BaseModel):
+    id: int
+    kind: Kind
+    title: str
+    scheduled_date: date | None
+    scheduled_time: time | None
+    timezone: str
+
+
+class NotificationsDueResponse(BaseModel):
+    items: list[NotificationItem]
+    count: int
 
 
 class ChatInput(BaseModel):

@@ -21,6 +21,8 @@ class Settings:
     deepseek_base_url: str = "https://api.literouter.com/v1"
     deepseek_model: str = "deepseek-v4.1-flash-1017:free"
     deepseek_timeout_seconds: float = 30.0
+    notification_max_age_hours: int = 24
+    notification_tolerance_seconds: int = 60
 
     def __post_init__(self):
         try:
@@ -53,4 +55,6 @@ def from_env() -> Settings:
         deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.literouter.com/v1"),
         deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4.1-flash-1017:free"),
         deepseek_timeout_seconds=float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "30")),
+        notification_max_age_hours=int(os.getenv("ASSISTANT_NOTIFICATION_MAX_AGE_HOURS", "24")),
+        notification_tolerance_seconds=int(os.getenv("ASSISTANT_NOTIFICATION_TOLERANCE_SECONDS", "60")),
     )
