@@ -6,6 +6,7 @@ node_modules/
 frontend/dist/
 chat_log.txt
 .env
+.env.save
 *.db
 *.db-shm
 *.db-wal

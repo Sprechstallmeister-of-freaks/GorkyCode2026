@@ -707,6 +707,27 @@ h1, h2, h3, p { margin: 0; }
   .badge-notice {
     background: #e11d48;
   }
+
+  .notification-check {
+    position: relative;
+    color: var(--secondary);
+    font-size: 14px;
+  }
+
+  .notification-check.checking {
+    color: var(--accent);
+    animation: spin 1s linear infinite;
+  }
+
+  .notification-check[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
