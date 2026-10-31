@@ -35,4 +35,5 @@ export const api = {
       body: JSON.stringify({ message, session_id: sessionId }),
     }),
   history: (sessionId) => request(`/sessions/${sessionId}/history?limit=50`),
+  getDueNotifications: () => request('/notifications/due'),
 }

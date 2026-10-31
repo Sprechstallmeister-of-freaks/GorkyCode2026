@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -25,7 +25,20 @@ from .logging_config import (
     safe_body,
     set_request_id,
 )
-from .models import ChatInput, ChatOutput, Event, EventCreate, EventList, EventPatch, Kind, Status, SearchResponse
+from .models import (
+    ChatInput,
+    ChatOutput,
+    Event,
+    EventCreate,
+    EventList,
+    EventPatch,
+    Kind,
+    NotificationItem,
+    NotificationsDueResponse,
+    Status,
+    SearchResponse,
+)
+from .notifications import NotificationSettings, due_events
 from .routing import ChatRouter
 from .service import Planner, NotFoundError, DomainError, ConflictError
 
@@ -55,6 +68,10 @@ def create_app(settings: Settings | None = None, *, llm_provider: LLMProvider | 
     cfg = settings or from_env()
     db = Database(cfg.db_path)
     planner = Planner(db, cfg.timezone)
+    notification_settings = NotificationSettings(
+        max_age_hours=cfg.notification_max_age_hours,
+        tolerance_seconds=cfg.notification_tolerance_seconds,
+    )
     if cfg.import_seed and cfg.seed_csv:
         planner.import_csv(cfg.seed_csv)
 
@@ -78,10 +95,12 @@ def create_app(settings: Settings | None = None, *, llm_provider: LLMProvider | 
     app = FastAPI(title="Задачи и встречи — API", version="1.2.0",
                   description="DeepSeek tool calling, deterministic planner and rule fallback. Swagger: /docs",
                   lifespan=lifespan)
+    app.state.db = db
     app.state.planner = planner
     app.state.dialogue = dialogue
     app.state.tools = tools
     app.state.deepseek = client
+    app.state.notification_settings = notification_settings
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
@@ -160,6 +179,27 @@ def create_app(settings: Settings | None = None, *, llm_provider: LLMProvider | 
     @app.get("/health", response_model=Health, include_in_schema=False)
     def health_alias():
         return _health()
+
+    @app.get("/api/notifications/due", response_model=NotificationsDueResponse)
+    def notifications_due():
+        """События, время наступления которых наступило (опрос из браузера).
+
+        Возвращает и атомарно помечает уведомлёнными, чтобы при повторном опросе
+        то же уведомление не пришло дважды.
+        """
+        now_utc = datetime.now(timezone.utc)
+        due = due_events(
+            app.state.planner,
+            app.state.db,
+            now_utc=now_utc,
+            settings=app.state.notification_settings,
+        )
+        logger.info(
+            "Проверка уведомлений",
+            extra={"action": "notifications_due", "count": len(due), "now_utc": now_utc.isoformat()},
+        )
+        items = [NotificationItem.model_validate(event.model_dump()) for event in due]
+        return NotificationsDueResponse(items=items, count=len(items))
 
     @app.post("/api/events", response_model=Event, status_code=201)
     def create_event(payload: EventCreate):

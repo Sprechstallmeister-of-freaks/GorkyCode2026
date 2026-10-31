@@ -214,6 +214,9 @@ class Planner:
             for key, value in updates.items():
                 if key in raw:
                     raw[key] = value
+            # При изменении даты, времени или часового пояса событие должно
+            # уведомить повторно в новое время.
+            notify_reset = any(k in updates for k in ("scheduled_date", "scheduled_time", "timezone"))
             try:
                 checked = EventCreate.model_validate(raw)
             except Exception as exc:
@@ -239,6 +242,8 @@ class Planner:
             if "scheduled_time" in values:
                 values["scheduled_time"] = updates["scheduled_time"].strftime("%H:%M")
             values["updated_at"] = datetime.now(timezone.utc).isoformat()
+            if notify_reset:
+                values["notified_at"] = None
             setters = ", ".join(f"{key}=?" for key in values)
             cx.execute(f"UPDATE events SET {setters},version=version+1 WHERE id=?", [*values.values(), event_id])
             result = cx.execute("SELECT * FROM events WHERE id=?", (event_id,)).fetchone()

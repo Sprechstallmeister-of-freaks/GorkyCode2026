@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class Database:
@@ -59,12 +59,14 @@ class Database:
                     source TEXT NOT NULL DEFAULT 'manual',
                     external_id TEXT,
                     version INTEGER NOT NULL DEFAULT 1,
+                    notified_at TEXT,
                     UNIQUE(source, external_id),
                     CHECK(scheduled_time IS NULL OR scheduled_date IS NOT NULL)
                 );
                 CREATE INDEX IF NOT EXISTS idx_events_date ON events(scheduled_date, scheduled_time);
                 CREATE INDEX IF NOT EXISTS idx_events_kind_date ON events(kind, scheduled_date);
                 CREATE INDEX IF NOT EXISTS idx_events_status ON events(status);
+                CREATE INDEX IF NOT EXISTS idx_events_notified ON events(notified_at);
                 CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY,
                     active_event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
@@ -82,3 +84,10 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
                 PRAGMA user_version=1;
                 """)
+            if v == 1:
+                # Миграция 1 -> 2: колонка уведомлений о наступлении времени события.
+                columns = {row["name"] for row in cx.execute("PRAGMA table_info(events)")}
+                if "notified_at" not in columns:
+                    cx.execute("ALTER TABLE events ADD COLUMN notified_at TEXT")
+                cx.execute("CREATE INDEX IF NOT EXISTS idx_events_notified ON events(notified_at)")
+                cx.execute("PRAGMA user_version=2")

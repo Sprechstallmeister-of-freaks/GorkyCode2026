@@ -665,6 +665,48 @@ h1, h2, h3, p { margin: 0; }
 
   .calendar-panel, .chat-panel { height: calc(100dvh - 210px); min-height: 440px; }
   .event-actions { opacity: 1; }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: 16px;
+  }
+
+  .notification-toggle {
+    position: relative;
+    color: var(--secondary);
+  }
+
+  .notification-toggle.active {
+    color: var(--accent);
+  }
+
+  .notification-toggle.disabled,
+  .notification-toggle[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    margin-left: 6px;
+  }
+
+  .badge-notice {
+    background: #e11d48;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
