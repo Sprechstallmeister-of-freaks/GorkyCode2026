@@ -264,3 +264,77 @@ def test_http_errors_have_safe_deepseek_exception(status):
         assert client.connected is False
     finally:
         client.close()
+
+
+@pytest.mark.parametrize("status", [401, 402, 403, 429])
+def test_quota_and_auth_errors_fail_over_to_next_key(status):
+    authorizations = []
+
+    def handler(request):
+        authorization = request.headers["Authorization"]
+        authorizations.append(authorization)
+        if authorization == "Bearer first-key":
+            return httpx.Response(status, json={"error": "quota"})
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]})
+
+    client = DeepSeekClient(api_keys=["first-key", "second-key"], transport=httpx.MockTransport(handler))
+    try:
+        result = client.complete([], [])
+        assert result["content"] == "ok" and client.connected
+        assert client.active_key_index == 1
+        assert authorizations == ["Bearer first-key", "Bearer second-key"]
+    finally:
+        client.close()
+
+
+def test_rate_limited_key_has_cooldown_after_failover():
+    authorizations = []
+
+    def handler(request):
+        authorization = request.headers["Authorization"]
+        authorizations.append(authorization)
+        if authorization == "Bearer first-key":
+            return httpx.Response(429, headers={"Retry-After": "60"})
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]})
+
+    client = DeepSeekClient(api_keys=["first-key", "second-key"], transport=httpx.MockTransport(handler))
+    try:
+        client.complete([], [])
+        client.complete([], [])
+        assert authorizations == ["Bearer first-key", "Bearer second-key", "Bearer second-key"]
+    finally:
+        client.close()
+
+
+def test_server_error_does_not_rotate_key():
+    calls = []
+
+    def handler(request):
+        calls.append(request.headers["Authorization"])
+        return httpx.Response(500)
+
+    client = DeepSeekClient(api_keys=["first-key", "second-key"], transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(DeepSeekError) as error:
+            client.complete([], [])
+        assert "500" in str(error.value)
+        assert calls == ["Bearer first-key"]
+    finally:
+        client.close()
+
+
+def test_all_rejected_keys_return_safe_error():
+    calls = []
+
+    def handler(request):
+        calls.append(request.headers["Authorization"])
+        return httpx.Response(401)
+
+    client = DeepSeekClient(api_keys=["first-key", "second-key"], transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(DeepSeekError) as error:
+            client.complete([], [])
+        assert len(calls) == 2 and not client.connected
+        assert "first-key" not in str(error.value) and "second-key" not in str(error.value)
+    finally:
+        client.close()

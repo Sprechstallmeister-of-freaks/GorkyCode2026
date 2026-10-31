@@ -46,8 +46,8 @@ def create_app(settings: Settings | None = None, *, llm_provider: LLMProvider | 
     client = deepseek_client
     provider = llm_provider
     if provider is None:
-        if client is None and cfg.deepseek_api_key:
-            client = DeepSeekClient(api_key=cfg.deepseek_api_key, base_url=cfg.deepseek_base_url,
+        if client is None and cfg.deepseek_keys:
+            client = DeepSeekClient(api_keys=cfg.deepseek_keys, base_url=cfg.deepseek_base_url,
                                     model=cfg.deepseek_model, timeout_seconds=cfg.deepseek_timeout_seconds)
         if client is not None:
             provider = DeepSeekProvider(client)

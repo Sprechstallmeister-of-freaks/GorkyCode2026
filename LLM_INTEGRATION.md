@@ -1,6 +1,6 @@
 # Ритм — контракт интеграции произвольной LLM
 
-**Версия:** 1.3 · **Статус:** DeepSeek provider покрыт mocks; реальный LiteRouter smoke-test через `/api/chat` пройден.
+**Версия:** 1.3 · **Статус:** DeepSeek provider покрыт mocks; реальные LiteRouter smoke-tests `/api/chat`, `.env` и failover на второй ключ пройдены.
 
 Этот слой **обрабатывает жизненный цикл диалога, БД и tools независимо от конкретной модели**. Граница `LLMProvider` позволяет подключить другую LLM, а готовая реализация находится в `assistant/deepseek_provider.py`.
 
@@ -46,7 +46,9 @@ class LLMProvider(Protocol):
 
 ## Встроенный DeepSeek provider
 
-При `DEEPSEEK_API_KEY` `create_app()` автоматически создаёт `DeepSeekClient` и `DeepSeekProvider`. Без ключа сохраняется `NullLLMProvider` и локальные правила. По умолчанию выбраны `DEEPSEEK_BASE_URL=https://api.literouter.com/v1`, `DEEPSEEK_MODEL=deepseek-v4.1-flash-1017:free`, `DEEPSEEK_TIMEOUT_SECONDS=30`.
+При `DEEPSEEK_API_KEY` или `DEEPSEEK_API_KEYS` `create_app()` автоматически создаёт `DeepSeekClient` и `DeepSeekProvider`. Без ключей сохраняется `NullLLMProvider` и локальные правила. По умолчанию выбраны `DEEPSEEK_BASE_URL=https://api.literouter.com/v1`, `DEEPSEEK_MODEL=deepseek-v4.1-flash-1017:free`, `DEEPSEEK_TIMEOUT_SECONDS=30`.
+
+Локальный `.env` загружается через `python-dotenv` без перезаписи переменных реального окружения. `DEEPSEEK_API_KEYS` принимает список через запятую; дубликаты удаляются. При 401/402/403/429 клиент пробует следующий слот. Для 429 действует cooldown по `Retry-After` или 60 секунд; для остальных перечисленных кодов слот исключается до перезапуска. Timeout, 5xx и доменные ошибки не вызывают rotation. Секреты не попадают в `repr(Settings)`, ответы API или журнал.
 
 Клиент вызывает `POST /chat/completions`, передаёт шесть tools с `tool_choice=auto`, проверяет HTTP и базовую структуру ответа. Провайдер принимает только один tool call и не выполняет его. Для `target_query` используется служебное поле в аргументах get/update/cancel: провайдер извлекает его **до** строгой валидации конкретного tool и помещает в `ParsedCommand.target_query`.
 
