@@ -45,3 +45,40 @@ def test_unknown_is_explicit(planner):
     chat=RuleDialogue(planner,clock=lambda:NOW)
     response=chat.process('Обсудим стратегию продвижения?','s2')
     assert response.needs_llm and response.action=='unrecognized'
+
+
+def test_reminder_with_time_only_uses_nearest_future_day(planner):
+    # «напоминание на 10 утра поставь» без даты не должно входить
+    # в цикл уточнений: дата подставляется автоматически.
+    chat=RuleDialogue(planner,clock=lambda:NOW)  # NOW = 2026-10-30 09:44
+    a=chat.process('напоминание на 10 утра поставь','loop1')
+    assert a.action=='create' and a.event.kind=='reminder'
+    assert a.event.scheduled_date==date(2026,10,30) and a.event.scheduled_time==time(10,0)
+    # Если время уже прошло — переносим на завтра.
+    b=chat.process('напоминание на 8 утра поставь','loop1')
+    assert b.action=='create' and b.event.scheduled_date==date(2026,10,31)
+
+
+def test_pending_date_answered_with_time_does_not_loop(planner):
+    # Регрессия: на вопрос о дате пользователь отвечает временем («10», «10 утра»).
+    # Раньше это зацикливало уточнение; теперь событие создаётся.
+    chat=RuleDialogue(planner,clock=lambda:NOW)
+    planner.set_session('loop2',pending_action='create_event',pending_data={
+        'kind':'reminder','title':'позвонить Ивану',
+        'scheduled_date':None,'scheduled_time':'10:00'})
+    result=chat.process('10 утра','loop2')
+    assert result.action=='create'
+    assert result.event.scheduled_date==date(2026,10,30)
+    assert result.event.scheduled_time==time(10,0)
+
+
+def test_pending_bare_hour_reply(planner):
+    # Ответ «10» на уточнение, когда не заданы ни дата, ни время.
+    chat=RuleDialogue(planner,clock=lambda:NOW)
+    planner.set_session('loop3',pending_action='create_event',pending_data={
+        'kind':'reminder','title':'позвонить Ивану',
+        'scheduled_date':None,'scheduled_time':None})
+    result=chat.process('10','loop3')
+    assert result.action=='create'
+    assert result.event.scheduled_date==date(2026,10,30)
+    assert result.event.scheduled_time==time(10,0)

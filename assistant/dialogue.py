@@ -6,7 +6,7 @@ pretending to provide universal natural-language understanding.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from .dates import parse_datetime, period
@@ -38,6 +38,8 @@ def clean_title(text: str, consumed: tuple[str, ...], kind: Kind) -> str:
     s = re.sub(r"^(?:поставь|создай|добавь)\s+(?:мне\s+)?(?:задачу|напоминание)\s*", "", s, flags=re.I)
     s = re.sub(r"^(?:напомни\s+(?:мне\s+)?(?:о том,?\s+что\s+)?)", "", s, flags=re.I)
     s = re.sub(r"\b(?:нужно|надо)\b", " ", s, flags=re.I)
+    s = re.sub(r"\bнапоминание\b", " ", s, flags=re.I)
+    s = re.sub(r"\b(?:поставь|создай|добавь)\b", " ", s, flags=re.I)
     return re.sub(r"\s+", " ", s).strip(" .,!:—-")
 
 
@@ -45,6 +47,18 @@ class RuleDialogue:
     def __init__(self, planner: Planner, *, clock=None):
         self.planner = planner
         self.clock = clock or (lambda: datetime.now(ZoneInfo(planner.default_timezone)))
+
+    def _nearest_future_day(self, clock_time: time) -> date:
+        """День для события, у которого есть время, но нет даты.
+
+        Ближайшее такое время в будущем: сегодня, если оно ещё не прошло,
+        иначе завтра. Спасает от цикла уточнений «напомни на 10 утра».
+        """
+        now = self.clock()
+        candidate = datetime.combine(now.date(), clock_time, tzinfo=now.tzinfo)
+        if candidate > now:
+            return now.date()
+        return now.date() + timedelta(days=1)
 
     def process(self, message: str, session_id: str, *, record: bool = True) -> ChatOutput:
         raw = message.strip()
@@ -68,13 +82,27 @@ class RuleDialogue:
             return ChatOutput(answer="Создание отменено.", session_id=sid, action="cancel_pending")
         data = dict(state["pending_data"])
         parsed = parse_datetime(raw, tz=self.planner.default_timezone, now=self.clock())
+        clock = parsed.clock
+        if clock is None:
+            # Короткий ответ «10» / «в 10» на уточнение — это час, а не дата.
+            bare = re.fullmatch(r"(?:в\s+)?(\d{1,2})(?:\s+(?:час|часа|часов))?", s)
+            if bare and 0 <= int(bare.group(1)) < 24:
+                clock = time(int(bare.group(1)), 0)
         if parsed.day:
             data["scheduled_date"] = parsed.day.isoformat()
-        if parsed.clock:
-            data["scheduled_time"] = parsed.clock.strftime("%H:%M")
+        if clock:
+            data["scheduled_time"] = clock.strftime("%H:%M")
+        if not data.get("scheduled_date") and data.get("scheduled_time") and clock and not parsed.day:
+            # В ответ на вопрос о дате пользователь снова назвал только время.
+            # Не спрашиваем по кругу: ставим на ближайшее такое время в будущем.
+            data["scheduled_date"] = self._nearest_future_day(clock).isoformat()
         if not data.get("scheduled_date"):
             self.planner.set_session(sid, active_event_id=state["active_event_id"], pending_action="create_event", pending_data=data)
-            return ChatOutput(answer="На какую дату поставить событие? Например, «завтра» или «2026-11-05».", session_id=sid, action="clarify")
+            title = data.get("title") or "событие"
+            answer = f"На какой день поставить «{title}»? Скажи «сегодня», «завтра» или укажи дату."
+            if data.get("scheduled_time"):
+                answer += f" Время {data['scheduled_time']} уже сохранено."
+            return ChatOutput(answer=answer, session_id=sid, action="clarify")
         if not data.get("scheduled_time"):
             self.planner.set_session(sid, active_event_id=state["active_event_id"], pending_action="create_event", pending_data=data)
             return ChatOutput(answer="На какое время? Например, «в 15:00».", session_id=sid, action="clarify")
@@ -150,12 +178,19 @@ class RuleDialogue:
             kind = Kind.meeting if meeting else Kind.reminder if reminder else Kind.task
             parsed = parse_datetime(raw, tz=self.planner.default_timezone, now=self.clock())
             title = clean_title(raw, parsed.consumed, kind)
+            if not title and kind == Kind.reminder:
+                # «Напоминание на 10 утра» без текста — допустимая запись.
+                title = "Напоминание"
             if not title:
                 return ChatOutput(answer="Что записать? Укажи название задачи или встречи.", session_id=sid, action="clarify")
             data = {"kind": kind.value, "title": title,
                     "scheduled_date": parsed.day.isoformat() if parsed.day else None,
                     "scheduled_time": parsed.clock.strftime("%H:%M") if parsed.clock else None}
-            if kind in (Kind.meeting, Kind.reminder) and (not parsed.day or not parsed.clock):
+            if kind in (Kind.meeting, Kind.reminder) and not parsed.day and parsed.clock:
+                # Время указано, а дата нет: не заставляем пользователя уточнять —
+                # выбираем ближайшее такое время (сегодня или завтра).
+                data["scheduled_date"] = self._nearest_future_day(parsed.clock).isoformat()
+            if kind in (Kind.meeting, Kind.reminder) and (not data["scheduled_date"] or not data["scheduled_time"]):
                 self.planner.set_session(sid, active_event_id=state.get("active_event_id"), pending_action="create_event", pending_data=data)
                 missing = "дату" if not parsed.day else "время"
                 return ChatOutput(answer=f"Уточни {missing} для «{title}».", session_id=sid, action="clarify")

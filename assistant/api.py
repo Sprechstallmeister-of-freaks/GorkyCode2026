@@ -262,6 +262,11 @@ def create_app(settings: Settings | None = None, *, llm_provider: LLMProvider | 
                    "message_len": len(payload.message), "message_preview": payload.message[:120]},
         )
         result = dialogue.process(payload.message, payload.session_id)
+        # Человекочитаемая переписка в chat_log.txt (путь: ASSISTANT_CHAT_LOG).
+        logging.getLogger("assistant.chat_transcript").info(
+            "session=%s\nПОЛЬЗОВАТЕЛЬ: %s\nАССИСТЕНТ [action=%s mode=%s]: %s\n",
+            payload.session_id, payload.message, result.action, result.mode, result.answer,
+        )
         logger.info(
             "Чат-запрос обработан",
             extra={"session_id": payload.session_id, "action": result.action,

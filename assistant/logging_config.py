@@ -17,7 +17,10 @@ import sys
 import uuid
 from contextvars import ContextVar
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Scoped request id: корреляция логов в рамках одного HTTP-запроса.
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
@@ -125,13 +128,27 @@ def configure_logging(
             "human": {
                 "()": HumanFormatter,
             },
+            "transcript": {
+                "format": "[%(asctime)s] %(message)s",
+                "datefmt": "%Y-%m-%d %H:%M:%S",
+            },
         },
         "filters": {
             "request_id": {
                 "()": RequestIdFilter,
             },
         },
-        "handlers": handler_configs,
+        "handlers": {
+            **handler_configs,
+            # Отдельный txt-файл с перепиской чата: вопрос -> ответ, без шума.
+            # Путь можно переопределить переменной ASSISTANT_CHAT_LOG.
+            "chat_file": {
+                "class": "logging.FileHandler",
+                "filename": os.getenv("ASSISTANT_CHAT_LOG", str(PROJECT_ROOT / "chat_log.txt")),
+                "encoding": "utf-8",
+                "formatter": "transcript",
+            },
+        },
         "root": {
             "level": level,
             "handlers": handlers,
@@ -140,6 +157,11 @@ def configure_logging(
             "assistant": {
                 "level": level,
                 "handlers": handlers,
+                "propagate": False,
+            },
+            "assistant.chat_transcript": {
+                "level": "INFO",
+                "handlers": ["chat_file"],
                 "propagate": False,
             },
             "uvicorn": {

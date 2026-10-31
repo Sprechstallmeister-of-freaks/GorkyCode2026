@@ -89,7 +89,7 @@ def parse_datetime(text: str, *, tz: str, now: datetime | None = None) -> DateTi
             clock = time(int(m.group(1)), int(m.group(2)))
             consumed.append(m.group())
         else:
-            m = re.search(r"\bв\s+(\d{1,2})(?:\s+(утра|дня|вечера|ночи))\b", s)
+            m = re.search(r"\b(?:(?:в|на)\s+)?(\d{1,2})(?:\s+(утра|дня|вечера|ночи))\b", s)
             if m:
                 hour = int(m.group(1))
                 part = m.group(2)
