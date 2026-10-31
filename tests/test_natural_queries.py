@@ -21,7 +21,7 @@ class NoToolProvider:
 
     def interpret(self, text, context, tools):
         self.interpret_calls += 1
-        raise AssertionError("A high-confidence schedule read must not ask the LLM for a tool")
+        return ParsedCommand(tool="unknown")
 
     def expand_search(self, query, context):
         return []
@@ -30,6 +30,8 @@ class NoToolProvider:
 class CreateWithoutDateProvider(NoToolProvider):
     def interpret(self, text, context, tools):
         self.interpret_calls += 1
+        if "после" in text.lower():
+            return ParsedCommand(tool="unknown")
         return ParsedCommand(tool="create_event", arguments={
             "kind": "task", "title": "Побегать с Аллой",
         })
@@ -70,7 +72,7 @@ def test_agenda_questions_read_exact_day_and_never_create(planner, message, targ
     assert "Создано" not in result.answer
     assert planner.list()[1] == before
     if provider is not None:
-        assert provider.interpret_calls == 0
+        assert provider.interpret_calls == 1
 
 
 @pytest.mark.parametrize("with_llm", [False, True])
@@ -109,7 +111,7 @@ def test_after_named_event_uses_exact_anchor_and_only_later_events(planner, with
     assert "И ещё" not in result.answer
     assert planner.list()[1] == before
     if provider is not None:
-        assert provider.interpret_calls == 0
+        assert provider.interpret_calls == 1
 
 
 def test_after_named_event_answers_empty_instead_of_dumping_fuzzy_matches(planner):
@@ -177,7 +179,7 @@ def test_create_on_this_day_uses_date_from_previous_event(planner, with_llm):
     assert "14.05.2026" in result.answer
     assert planner.list()[1] == 2
     if provider is not None:
-        assert provider.interpret_calls == 1
+        assert provider.interpret_calls == 2
 
 
 def test_explicit_task_statement_still_creates(planner):

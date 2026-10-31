@@ -86,15 +86,15 @@ def test_deepseek_describes_actual_list_result(planner):
     assert "Отправить отчёт" in client.calls[1]["messages"][-1]["content"]
 
 
-def test_rule_search_can_use_hybrid_description(planner):
+def test_rule_search_is_fallback_when_llm_returns_no_tool(planner):
     planner.create(EventCreate(kind="task", title="Проверить договор"))
-    client = FakeDeepSeek(text("Нашёл задачу: проверить договор."))
+    client = FakeDeepSeek(text("Не могу выбрать инструмент."))
     result = router(planner, client).process("Найди задачу про договор", "rule-read")
 
-    assert result.action == "search" and result.mode == "deepseek"
-    assert result.answer == "Нашёл задачу: проверить договор."
+    assert result.action == "search" and result.mode == "fallback"
+    assert "Проверить договор" in result.answer
     assert len(client.calls) == 1
-    assert client.calls[0]["tools"] == []
+    assert len(client.calls[0]["tools"]) == 6
 
 
 def test_read_result_is_kept_when_description_fails(planner):
@@ -111,18 +111,18 @@ def test_read_result_is_kept_when_description_fails(planner):
     assert len(planner.history("read-fallback")) == 2
 
 
-def test_recognized_rule_bypasses_deepseek(planner):
-    client = FakeDeepSeek()
+def test_recognized_rule_is_fallback_after_llm_unknown(planner):
+    client = FakeDeepSeek(text("Инструмент не выбран."))
     result = router(planner, client).process("Напомни мне завтра в 10 утра позвонить Ивану", "rules")
 
     assert result.action == "create" and result.mode == "fallback"
     assert planner.list()[1] == 1
-    assert client.calls == []
+    assert len(client.calls) == 1
 
 
 def test_malformed_tool_json_never_reaches_database(planner):
     client = FakeDeepSeek(call("create_event", '{"kind":'))
-    result = router(planner, client).process("Собери команду завтра в три", "bad-json")
+    result = router(planner, client).process("???", "bad-json")
 
     assert result.action == "unrecognized" and result.mode == "fallback"
     assert planner.list()[1] == 0
@@ -130,7 +130,7 @@ def test_malformed_tool_json_never_reaches_database(planner):
 
 def test_provider_failure_has_controlled_response(planner):
     client = FakeDeepSeek(DeepSeekError("offline"))
-    result = router(planner, client).process("Совершенно нестандартная просьба", "offline")
+    result = router(planner, client).process("???", "offline")
 
     assert result.action == "unrecognized" and result.needs_llm
     assert planner.list()[1] == 0

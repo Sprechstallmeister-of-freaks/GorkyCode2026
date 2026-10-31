@@ -160,7 +160,7 @@ def test_due_api_endpoint(client):
         json={
             "kind": "reminder",
             "title": "Через API",
-            "scheduled_date": now_msk.date().isoformat(),
+            "scheduled_date": past.date().isoformat(),
             "scheduled_time": past.strftime("%H:%M"),
         },
     )

@@ -16,8 +16,9 @@ class FakeProvider:
 
     def interpret(self, text, context, tools):
         self.interpret_calls += 1
-        assert set(context.model_dump(mode="json")) == {"now", "timezone"}
-        assert "+" in context.model_dump(mode="json")["now"] or "-" in context.model_dump(mode="json")["now"][10:]
+        payload = context.model_dump(mode="json")
+        assert {"now", "timezone"} <= set(payload) <= {"now", "timezone", "events"}
+        assert "+" in payload["now"] or "-" in payload["now"][10:]
         assert len(tools) == 6
         return self.result
 
@@ -26,13 +27,29 @@ class FakeProvider:
         return self.synonyms
 
 
-def test_known_rule_skips_llm_and_single_history(planner):
+def test_known_rule_uses_llm_first_then_fallback_and_single_history(planner):
     fake = FakeProvider()
     r = ChatRouter(planner, provider=fake)
     out = r.process("Добавь встречу с отделом завтра в 11:00", "session_a")
     assert out.action == "create"
-    assert fake.interpret_calls == 0
+    assert fake.interpret_calls == 1
     assert len(planner.history("session_a")) == 2
+
+
+def test_simple_agenda_is_handled_by_llm_first(planner):
+    planner.create(EventCreate(
+        kind="task", title="Отправить отчёт",
+        scheduled_date="2026-11-02", scheduled_time="10:00",
+    ))
+    fake = FakeProvider(ParsedCommand(tool="list_events", arguments={
+        "from_date": "2026-11-02", "to_date": "2026-11-02",
+    }))
+    result = ChatRouter(planner, provider=fake).process("Что у меня сегодня?", "agenda_llm")
+
+    assert result.action == "list_events"
+    assert result.mode == "deepseek"
+    assert [event.title for event in result.events] == ["Отправить отчёт"]
+    assert fake.interpret_calls == 1
 
 
 def test_llm_fallback_validated_and_written(planner):
@@ -113,14 +130,20 @@ def test_conflict_rejected_by_planner(planner):
     result = ChatRouter(planner, provider=fake).process("Забронируй получасовой созвон", "conflict")
     assert result.action == "conflict"
     assert planner.list()[1] == 1
+    assert fake.interpret_calls == 1
 
 
-def test_provider_failure_does_not_crash(planner):
+def test_provider_failure_uses_local_rules_without_crash(planner):
     class Broken(FakeProvider):
         def interpret(self, *args):
             raise TimeoutError("model unavailable")
-    result = ChatRouter(planner, provider=Broken()).process("Что-нибудь нестандартное", "broken")
-    assert result.action == "unrecognized"
+
+    result = ChatRouter(planner, provider=Broken()).process(
+        "Добавь встречу с отделом завтра в 11:00", "broken",
+    )
+    assert result.action == "create"
+    assert result.mode == "fallback"
+    assert planner.list()[1] == 1
     assert len(planner.history("broken")) == 2
 
 

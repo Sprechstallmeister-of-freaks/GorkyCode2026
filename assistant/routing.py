@@ -1,4 +1,4 @@
-"""Rule-first dialogue orchestration with a replaceable LLM provider.
+"""LLM-first dialogue orchestration with deterministic local fallback.
 
 The database remains the source of truth. Model suggestions always pass through
 ToolRegistry validation and Planner domain rules. Session state handles follow-ups.
@@ -56,7 +56,7 @@ class ChatRouter:
         return bool(getattr(self.provider, "connected", self.llm_configured))
 
     def process(self, message: str, session_id: str) -> ChatOutput:
-        """Exactly one user+assistant history pair per incoming message."""
+        """LLM-first dialogue with deterministic fallback and one history pair."""
         raw = message.strip()
         state = self.planner.get_session(session_id)
 
@@ -84,81 +84,24 @@ class ChatRouter:
             if state.get("pending_action") in {
                 "select_event", "select_after_event", "confirm_cancel", "complete_command"
             }:
+                # Уточнения и подтверждения не отдаём модели: серверное состояние
+                # содержит защищённые аргументы и версию отменяемого события.
                 result = self._continue(raw, session_id, state)
-            elif (schedule_request := self.schedule_queries.parse(
-                effective_raw, now=self.rules.clock(), timezone=self.planner.default_timezone
-            )) is not None:
-                # Informational questions must reach read-only logic before the
-                # legacy «нужно/надо» task-creation fallback or an LLM tool call.
-                if isinstance(schedule_request, AgendaRequest):
-                    result = self._answer_agenda(schedule_request, session_id)
-                elif isinstance(schedule_request, AfterEventRequest):
-                    result = self._answer_after_event(schedule_request, session_id, state)
-                else:  # pragma: no cover - exhaustiveness guard for future request types
-                    raise TypeError("Неизвестный тип вопроса о расписании")
+            elif self.llm_configured:
+                result = self._process_with_llm(effective_raw, session_id, state)
+                if result.action == "unrecognized":
+                    # Модель не смогла выбрать инструмент либо недоступна. Только
+                    # теперь разрешаем локальный fallback; валидные tool-результаты,
+                    # конфликты и ошибки Planner никогда не выполняем повторно.
+                    logger.info(
+                        "LLM не вернула применимую команду, используем локальный fallback",
+                        extra={"session_id": session_id, "action": "llm_fallback"},
+                    )
+                    result = self._process_rules(effective_raw, raw, session_id, state)
+                else:
+                    result = self._maybe_describe(raw, result, session_id, state)
             else:
-                # Existing rule handler retains its own create-event clarification.
-                result = self.rules.process(effective_raw, session_id, record=False)
-                if result.needs_llm and result.action != "unrecognized":
-                    # LLM needed for a recognized-but-complex rule action
-                    result = self._interpret(effective_raw, session_id, state)
-                elif result.action == "search" and not result.events:
-                    result = self._search_with_synonyms(raw, session_id, state)
-                elif result.needs_llm and result.action == "unrecognized":
-                    # Free-form phrase not covered by rules.
-                    if isinstance(self.provider, NullLLMProvider):
-                        # Офлайн-режим — локальный парсер
-                        parsed = self.freeform.parse(
-                            effective_raw, now=datetime.now(ZoneInfo(self.planner.default_timezone))
-                        )
-                        logger.info(
-                            "FreeFormParser результат",
-                            extra={"session_id": session_id, "action": "freeform_parse",
-                                   "title": parsed.title, "kind": parsed.kind.value if parsed.kind else None,
-                                   "start_date": str(parsed.start_date) if parsed.start_date else None,
-                                   "start_time": str(parsed.start_time) if parsed.start_time else None,
-                                   "recurrence": parsed.recurrence, "confidence": parsed.confidence,
-                                   "missing": parsed.missing, "is_query": parsed.is_query,
-                                   "is_conditional": parsed.is_conditional},
-                        )
-                        if parsed.is_query:
-                            result = self._query_from_freeform(parsed, session_id, state)
-                        elif parsed.title:
-                            # Есть название — пробуем создать событие, даже если не хватает даты/времени.
-                            # Недостающие поля будем уточнять через complete_command.
-                            if parsed.confidence >= 0.3 and not parsed.missing:
-                                result = self._create_from_freeform(parsed, session_id, state)
-                            else:
-                                # Не всё ясно — спрашиваем у пользователя и сохраняем черновик
-                                first_missing = parsed.missing[0] if parsed.missing else "date"
-                                question = self._missing_question(first_missing)
-                                self.planner.set_session(
-                                    session_id,
-                                    pending_action="complete_command",
-                                    pending_data={"tool": "create_event",
-                                                  "arguments": parsed.args_dict()},
-                                )
-                                result = ChatOutput(answer=question, session_id=session_id,
-                                                    action="clarify", needs_llm=False)
-                        else:
-                            result = ChatOutput(
-                                answer="Не удалось распознать задачу. Попробуй перефразировать.",
-                                session_id=session_id, action="unrecognized", needs_llm=True)
-                    else:
-                        # LLM подключён — определяем, вопрос ли это, и загружаем события из БД для контекста.
-                        probe = self.freeform.parse(
-                            effective_raw, now=datetime.now(ZoneInfo(self.planner.default_timezone))
-                        )
-                        events_ctx = None
-                        if probe.is_query:
-                            # Загружаем события из БД для контекста модели.
-                            from_date = probe.start_date
-                            to_date = probe.end_date
-                            items, _ = self.planner.list(from_date=from_date, to_date=to_date,
-                                                         kind=probe.kind, limit=50)
-                            events_ctx = [e.model_dump(mode="json") for e in items]
-                        result = self._interpret(effective_raw, session_id, state, events=events_ctx)
-                result = self._maybe_describe(raw, result, session_id, state)
+                result = self._process_rules(effective_raw, raw, session_id, state)
         except (ValueError, TypeError, ValidationError) as exc:
             logger.exception("Ошибка валидации при обработке сообщения",
                              extra={"session_id": session_id, "action": "chat_process",
@@ -172,6 +115,74 @@ class ChatRouter:
                    "events_count": len(result.events), "answer_preview": result.answer[:120]},
         )
         return result
+
+    def _process_with_llm(self, text: str, sid: str, state: dict) -> ChatOutput:
+        """Дать LLM первую попытку обработки любого нового сообщения."""
+        probe = self.freeform.parse(
+            text, now=datetime.now(ZoneInfo(self.planner.default_timezone))
+        )
+        events_ctx = None
+        if probe.is_query:
+            items, _ = self.planner.list(
+                from_date=probe.start_date, to_date=probe.end_date,
+                kind=probe.kind, limit=50,
+            )
+            events_ctx = [event.model_dump(mode="json") for event in items]
+        return self._interpret(text, sid, state, events=events_ctx)
+
+    def _process_rules(self, effective_raw: str, raw: str, sid: str, state: dict) -> ChatOutput:
+        """Детерминированный резерв без повторной интерпретации через LLM."""
+        schedule_request = self.schedule_queries.parse(
+            effective_raw, now=self.rules.clock(), timezone=self.planner.default_timezone
+        )
+        if isinstance(schedule_request, AgendaRequest):
+            return self._answer_agenda(schedule_request, sid)
+        if isinstance(schedule_request, AfterEventRequest):
+            return self._answer_after_event(schedule_request, sid, state)
+
+        result = self.rules.process(effective_raw, sid, record=False)
+        if result.action == "search" and not result.events and not self.llm_configured:
+            # NullLLMProvider сохраняет прежний контролируемый ответ без сети.
+            return self._search_with_synonyms(raw, sid, state)
+        if result.needs_llm and result.action == "unrecognized":
+            return self._freeform_fallback(effective_raw, sid, state)
+        return result
+
+    def _freeform_fallback(self, text: str, sid: str, state: dict) -> ChatOutput:
+        """Последний локальный резерв для фраз, не покрытых RuleDialogue."""
+        parsed = self.freeform.parse(
+            text, now=datetime.now(ZoneInfo(self.planner.default_timezone))
+        )
+        logger.info(
+            "FreeFormParser результат",
+            extra={"session_id": sid, "action": "freeform_parse",
+                   "title": parsed.title, "kind": parsed.kind.value if parsed.kind else None,
+                   "start_date": str(parsed.start_date) if parsed.start_date else None,
+                   "start_time": str(parsed.start_time) if parsed.start_time else None,
+                   "recurrence": parsed.recurrence, "confidence": parsed.confidence,
+                   "missing": parsed.missing, "is_query": parsed.is_query,
+                   "is_conditional": parsed.is_conditional},
+        )
+        if parsed.is_query:
+            return self._query_from_freeform(parsed, sid, state)
+        meaningful_title = parsed.title and any(char.isalnum() for char in parsed.title)
+        if meaningful_title:
+            if parsed.confidence >= 0.3 and not parsed.missing:
+                return self._create_from_freeform(parsed, sid, state)
+            first_missing = parsed.missing[0] if parsed.missing else "date"
+            self.planner.set_session(
+                sid,
+                pending_action="complete_command",
+                pending_data={"tool": "create_event", "arguments": parsed.args_dict()},
+            )
+            return ChatOutput(
+                answer=self._missing_question(first_missing), session_id=sid,
+                action="clarify", needs_llm=False,
+            )
+        return ChatOutput(
+            answer="Не удалось распознать задачу. Попробуй перефразировать.",
+            session_id=sid, action="unrecognized", needs_llm=True,
+        )
 
     def _resolve_date_reference(self, text: str, state: dict) -> tuple[str, date | None]:
         """Resolve «на этот день» from the event discussed in the previous turn."""
