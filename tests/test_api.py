@@ -15,7 +15,13 @@ def test_crud(client):
     assert client.post('/api/events',json={'kind':'meeting','title':'Пересечение','scheduled_date':'2026-11-04','scheduled_time':'15:20'}).status_code==409
     assert client.patch(f'/api/events/{id}',json={'title':'Новый заголовок','expected_version':1}).status_code==200
     assert client.patch(f'/api/events/{id}',json={'title':'Старый запрос','expected_version':1}).status_code==409
-    assert client.delete(f'/api/events/{id}',params={'expected_version':2}).status_code==200
+    assert client.delete(f'/api/events/{id}',params={'expected_version':2}).status_code==409
+    assert client.patch(f'/api/events/{id}',json={'status':'cancelled'}).status_code==409
+    challenge = client.post(f'/api/events/{id}/cancel-request',json={'session_id':'rest_confirm'})
+    assert challenge.status_code==200 and challenge.json()['action']=='clarify'
+    assert client.get(f'/api/events/{id}').json()['status']=='open'
+    confirmed = client.post('/api/chat',json={'session_id':'rest_confirm','message':'да'})
+    assert confirmed.status_code==200 and confirmed.json()['action']=='cancel_event'
     assert client.get('/api/events').json()['total']==0
     assert client.get('/api/events',params={'include_cancelled':True}).json()['total']==1
 

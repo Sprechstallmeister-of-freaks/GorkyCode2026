@@ -164,10 +164,23 @@ async function changeEvent(id, patch) {
   catch(err) {toast(err.message);}
 }
 async function cancelEvent(event) {
-  if (!confirm(`Отменить «${event.title}»? Запись останется в базе со статусом «отменена».`)) return;
-  try {await request(`/api/events/${event.id}?expected_version=${event.version}`,{method:'DELETE'}); toast('Запись отменена'); await loadEvents();}
-  catch(err){toast(err.message);}
+  try {
+    const challenge = await request(`/api/events/${event.id}/cancel-request`, {
+      method: 'POST', body: JSON.stringify({session_id: sessionId})
+    });
+    // Human acknowledgement occurs AFTER the server issues the challenge.
+    const approved = confirm(challenge.answer);
+    const result = await request('/api/chat', {
+      method: 'POST',
+      body: JSON.stringify({session_id: sessionId, message: approved ? 'да' : 'нет'})
+    });
+    if (!approved) return;
+    if (result.action !== 'cancel_event') throw new Error(result.answer || 'Отмена не выполнена');
+    toast('Запись отменена');
+    await loadEvents();
+  } catch(err) { toast(err.message); }
 }
+
 function appendMessage(role, content) {
   const div = node('div','message ' + role,content);
   $('messages').append(div);

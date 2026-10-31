@@ -46,7 +46,7 @@ class RuleDialogue:
         self.planner = planner
         self.clock = clock or (lambda: datetime.now(ZoneInfo(planner.default_timezone)))
 
-    def process(self, message: str, session_id: str) -> ChatOutput:
+    def process(self, message: str, session_id: str, *, record: bool = True) -> ChatOutput:
         raw = message.strip()
         s = raw.lower().replace("ё", "е")
         state = self.planner.get_session(session_id)
@@ -58,7 +58,8 @@ class RuleDialogue:
                 result = self._route(raw, s, session_id, state)
         except (DomainError, ConflictError, NotFoundError, ValueError) as exc:
             result = ChatOutput(answer=str(exc), session_id=session_id, action="error")
-        self.planner.append_dialogue(session_id, raw, result.answer)
+        if record:
+            self.planner.append_dialogue(session_id, raw, result.answer)
         return result
 
     def _finish_pending(self, raw, s, sid, state) -> ChatOutput:

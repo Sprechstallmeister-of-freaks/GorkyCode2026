@@ -9,14 +9,20 @@ from typing import Annotated
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .config import Settings, from_env, PROJECT_ROOT
 from .database import Database
 from .dialogue import RuleDialogue
-from .models import ChatInput, ChatOutput, Event, EventCreate, EventList, EventPatch, Kind, SearchResponse
+from .routing import ChatRouter
+from .llm_provider import LLMProvider
+from .models import ChatInput, ChatOutput, Event, EventCreate, EventList, EventPatch, Kind, Status, SearchResponse
 from .service import Planner, NotFoundError, DomainError, ConflictError
 from .tools import ToolRegistry
+
+
+class CancelRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 class Health(BaseModel):
@@ -26,15 +32,15 @@ class Health(BaseModel):
     records: int
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, llm_provider: LLMProvider | None = None) -> FastAPI:
     cfg = settings or from_env()
     db = Database(cfg.db_path)
     planner = Planner(db, cfg.timezone)
     if cfg.import_seed and cfg.seed_csv:
         planner.import_csv(cfg.seed_csv)
-    dialogue = RuleDialogue(planner)
-    tools = ToolRegistry(planner)
-    app = FastAPI(title="Задачи и встречи — API", version="1.0.0",
+    dialogue = ChatRouter(planner, provider=llm_provider)
+    tools = dialogue.tools
+    app = FastAPI(title="Задачи и встречи — API", version="1.1.0",
                   description="LLM-independent planner. Swagger: /docs")
     app.state.planner = planner
     app.state.dialogue = dialogue
@@ -58,7 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/health", response_model=Health)
     def health():
         _, count = planner.list(limit=1, include_cancelled=True)
-        return Health(status="ok", llm_connected=False, timezone=cfg.timezone, records=count)
+        return Health(status="ok", llm_connected=dialogue.llm_connected, timezone=cfg.timezone, records=count)
 
     @app.post("/api/events", response_model=Event, status_code=201)
     def create_event(payload: EventCreate):
@@ -85,12 +91,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/api/events/{event_id}", response_model=Event)
     def update_event(event_id: int, patch: EventPatch):
+        if patch.status == Status.cancelled:
+            raise HTTPException(status_code=409, detail="Для отмены требуется отдельное подтверждение: POST /api/events/{id}/cancel-request и затем POST /api/chat со словом 'да'")
         return planner.update(event_id, patch)
 
-    @app.delete("/api/events/{event_id}", response_model=Event,
-                description="Soft delete: moves status to cancelled; records are not physically erased.")
+    @app.post("/api/events/{event_id}/cancel-request", response_model=ChatOutput,
+              description="Start cancellation. It does NOT change data. User must confirm in a separate /api/chat request.")
+    def request_cancel(event_id: int, payload: CancelRequest):
+        event = planner.get(event_id)
+        if event.status == Status.cancelled:
+            raise HTTPException(status_code=409, detail="Событие уже отменено")
+        state = planner.get_session(payload.session_id)
+        planner.set_session(payload.session_id, active_event_id=state.get("active_event_id"),
+            pending_action="confirm_cancel", pending_data={"tool": "cancel_event",
+                "arguments": {"event_id": event.id, "expected_version": event.version}})
+        return ChatOutput(answer=f"Подтверди отмену «{event.title}» (#{event.id}): да или нет?",
+                          session_id=payload.session_id, action="clarify")
+
+    @app.delete("/api/events/{event_id}", deprecated=True,
+                description="Direct cancellation is disabled: separate user confirmation is required.")
     def cancel_event(event_id: int, expected_version: int | None = None):
-        return planner.cancel(event_id, expected_version=expected_version)
+        raise HTTPException(status_code=409,
+            detail="Отмена без отдельного подтверждения запрещена. Сначала POST /api/events/{id}/cancel-request, затем POST /api/chat (да/нет).")
 
     @app.post("/api/chat", response_model=ChatOutput)
     def chat(payload: ChatInput):

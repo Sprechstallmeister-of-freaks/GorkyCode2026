@@ -95,6 +95,8 @@ class ToolRegistry:
                 items, total = self.planner.search(args.query, kind=args.kind, limit=args.limit)
                 return {"ok": True, "items": [e.model_dump(mode="json") for e in items], "total": total}
             if name == "update_event":
+                if args.status == Status.cancelled:
+                    return {"ok": False, "error": "confirmation_required", "message": "Отмена события выполняется только через cancel_event с отдельным подтверждением пользователя"}
                 patch = args.model_dump(exclude_unset=True, exclude={"event_id"})
                 event = self.planner.update(args.event_id, EventPatch.model_validate(patch))
                 return {"ok": True, "event": event.model_dump(mode="json")}
