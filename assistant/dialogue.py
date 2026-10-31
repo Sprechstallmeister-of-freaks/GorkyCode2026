@@ -133,6 +133,19 @@ class RuleDialogue:
         meeting = bool(re.search(r"\b(?:встреча|встречу|встречи)\b", s))
         reminder = bool(re.search(r"\b(?:напомни|напоминание)\b", s))
         task = bool(re.search(r"\b(?:задачу|задача|нужно|надо)\b", s))
+        explicit_create = bool(re.search(
+            r"\b(?:добавь|создай|поставь|запланируй|запиши|напомни)\b", s
+        ))
+        looks_like_question = raw.rstrip().endswith("?") or bool(re.search(
+            r"\b(?:что|сколько|какие|есть\s+ли)\b", s
+        ))
+        if (meeting or reminder or task) and looks_like_question and not explicit_create:
+            # A question about existing plans is not an instruction to create a
+            # task merely because it contains «нужно», «надо» or «встреча».
+            return ChatOutput(
+                answer="Похоже, это вопрос о расписании, а не создание записи.",
+                session_id=sid, action="unrecognized", needs_llm=True,
+            )
         if meeting or reminder or task:
             kind = Kind.meeting if meeting else Kind.reminder if reminder else Kind.task
             parsed = parse_datetime(raw, tz=self.planner.default_timezone, now=self.clock())

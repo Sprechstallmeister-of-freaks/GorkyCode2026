@@ -21,6 +21,9 @@ class ParsedCommand(BaseModel):
     tool: ToolName | Literal["unknown"]
     arguments: dict[str, Any] = Field(default_factory=dict)
     target_query: str | None = Field(default=None, min_length=2, max_length=500)
+    confidence: float = Field(default=1.0, ge=0, le=1)
+    missing: list[str] = Field(default_factory=list)
+    clarification: str | None = None
 
 
 class LLMContext(BaseModel):
@@ -28,10 +31,13 @@ class LLMContext(BaseModel):
 
     Text and the fixed tool catalog are passed separately. Server-side session
     identifiers, conversation history and internal event IDs stay on the server.
+    Optional `events` carries read-only calendar rows the model may use to answer
+    questions about the user's schedule.
     """
     model_config = ConfigDict(extra="forbid")
     now: datetime
     timezone: str
+    events: list[dict] | None = Field(default=None)
 
     @field_validator("now")
     @classmethod
@@ -55,6 +61,11 @@ class LLMContext(BaseModel):
         if self.now.utcoffset() != expected:
             raise ValueError("now offset does not match timezone")
         return self
+
+    def model_dump(self, **kwargs) -> dict[str, Any]:
+        """Exclude None-valued fields so `events=None` doesn't appear in JSON."""
+        data = super().model_dump(**kwargs)
+        return {k: v for k, v in data.items() if v is not None}
 
 
 class RouteDecision(BaseModel):
