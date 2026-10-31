@@ -1,6 +1,6 @@
 # Ритм — контракт интеграции произвольной LLM
 
-**Версия:** 1.3 · **Статус:** DeepSeek provider реализован и покрыт mocks; реальный API smoke-test требует ключ.
+**Версия:** 1.3 · **Статус:** DeepSeek provider покрыт mocks; реальный LiteRouter smoke-test через `/api/chat` пройден.
 
 Этот слой **обрабатывает жизненный цикл диалога, БД и tools независимо от конкретной модели**. Граница `LLMProvider` позволяет подключить другую LLM, а готовая реализация находится в `assistant/deepseek_provider.py`.
 
@@ -46,7 +46,7 @@ class LLMProvider(Protocol):
 
 ## Встроенный DeepSeek provider
 
-При `DEEPSEEK_API_KEY` `create_app()` автоматически создаёт `DeepSeekClient` и `DeepSeekProvider`. Без ключа сохраняется `NullLLMProvider` и локальные правила. Настройки: `DEEPSEEK_BASE_URL=https://api.deepseek.com`, `DEEPSEEK_MODEL=deepseek-chat`, `DEEPSEEK_TIMEOUT_SECONDS=30`.
+При `DEEPSEEK_API_KEY` `create_app()` автоматически создаёт `DeepSeekClient` и `DeepSeekProvider`. Без ключа сохраняется `NullLLMProvider` и локальные правила. По умолчанию выбраны `DEEPSEEK_BASE_URL=https://api.literouter.com/v1`, `DEEPSEEK_MODEL=deepseek-v4.1-flash-1017:free`, `DEEPSEEK_TIMEOUT_SECONDS=30`.
 
 Клиент вызывает `POST /chat/completions`, передаёт шесть tools с `tool_choice=auto`, проверяет HTTP и базовую структуру ответа. Провайдер принимает только один tool call и не выполняет его. Для `target_query` используется служебное поле в аргументах get/update/cancel: провайдер извлекает его **до** строгой валидации конкретного tool и помещает в `ParsedCommand.target_query`.
 
@@ -151,7 +151,7 @@ app = create_app(llm_provider=MyProvider())
 ## Известные ограничения
 
 - Rule-based обработчик остался существующим и может распознавать неоднозначные формулировки как определённую команду. При успешном совпадении LLM не вызывается. Дополнительное повышение точности правил — отдельная задача.
-- Автоматических Windows-уведомлений и локального Whisper/Silero нет. Работа встроенной LLM требует действующий DeepSeek API-ключ; реальный сетевой smoke-test в репозитории не выполнялся.
+- Автоматических Windows-уведомлений и локального Whisper/Silero нет. Работа встроенной LLM требует сеть и действующий ключ. Реальный LiteRouter smoke-test выполнен отдельно и не входит в автоматический офлайн-набор pytest.
 - Список инструментов остаётся из шести операций: создание, список, поиск, получение, обновление, отмена.
 - Для существующего `RuleDialogue` сохранились его отдельные уточнения при создании; новые состояния LLM используют `pending_action` = `complete_command`, `select_event`, `confirm_cancel`.
 - Результат всегда приводится к `ChatOutput`. Произвольный текст модели допускается только как описание фактического read-only результата, а не как подтверждение мутации.

@@ -13,8 +13,8 @@ class DeepSeekError(Exception):
 
 
 class DeepSeekClient:
-    def __init__(self, *, api_key: str, base_url: str = "https://api.deepseek.com",
-                 model: str = "deepseek-chat", timeout_seconds: float = 30.0,
+    def __init__(self, *, api_key: str, base_url: str = "https://api.literouter.com/v1",
+                 model: str = "deepseek-v4.1-flash-1017:free", timeout_seconds: float = 30.0,
                  transport: httpx.BaseTransport | None = None):
         self.model = model
         self.connected = False

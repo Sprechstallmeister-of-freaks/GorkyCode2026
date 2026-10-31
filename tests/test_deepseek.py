@@ -225,7 +225,7 @@ def test_api_reports_configured_and_connected_states(tmp_path):
         answer = client.post("/api/chat", json={"session_id": "api", "message": "Нестандартная просьба"}).json()
         assert answer["mode"] == "deepseek" and answer["action"] == "create_event"
         after = client.get("/api/health").json()
-        assert after["llm_connected"] is True and after["llm_model"] == "deepseek-chat"
+        assert after["llm_connected"] is True and after["llm_model"] == "deepseek-v4.1-flash-1017:free"
     assert fake.closed
 
 
@@ -248,7 +248,7 @@ def test_http_client_sends_openai_compatible_tool_request():
     assert result["content"] == "ok" and client.connected
     assert seen["url"] == "https://api.deepseek.com/v1/chat/completions"
     assert seen["authorization"] == "Bearer test-secret"
-    assert seen["payload"]["model"] == "deepseek-chat"
+    assert seen["payload"]["model"] == "deepseek-v4.1-flash-1017:free"
     assert seen["payload"]["tool_choice"] == "auto"
 
 

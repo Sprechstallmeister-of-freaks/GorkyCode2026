@@ -15,8 +15,8 @@ class Settings:
     seed_csv: Path | None = None
     import_seed: bool = True
     deepseek_api_key: str | None = field(default=None, repr=False)
-    deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
+    deepseek_base_url: str = "https://api.literouter.com/v1"
+    deepseek_model: str = "deepseek-v4.1-flash-1017:free"
     deepseek_timeout_seconds: float = 30.0
 
     def __post_init__(self):
@@ -36,7 +36,7 @@ def from_env() -> Settings:
         seed_csv=Path(csv_name) if csv_name else None,
         import_seed=os.getenv("ASSISTANT_IMPORT_SEED", "1") == "1",
         deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", "").strip() or None,
-        deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.literouter.com/v1"),
+        deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4.1-flash-1017:free"),
         deepseek_timeout_seconds=float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "30")),
     )
