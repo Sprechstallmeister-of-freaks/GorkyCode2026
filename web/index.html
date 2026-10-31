@@ -1,66 +1,16 @@
 <!doctype html>
 <html lang="ru">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#12172a">
-  <title>Ритм — задачи и встречи</title>
-  <link rel="stylesheet" href="/static/styles.css">
-  <script src="/static/app.js" defer></script>
-</head>
-<body>
-  <div class="shell">
-    <aside class="sidebar">
-      <div class="brand"><span class="brand-logo">✺</span><div><strong>ритм</strong><small>Задачи и встречи</small></div></div>
-      <div class="sidebar-header">РАБОЧЕЕ ПРОСТРАНСТВО</div>
-      <div class="nav-item selected"><span>◫</span> Обзор <span class="nav-indicator"></span></div>
-      <div class="nav-item"><span>◷</span> Локальный режим</div>
-      <div class="sidebar-bottom">
-        <div class="status-dot"><span></span> Бизнес-логика готова</div>
-        <p id="llm-note">DeepSeek не настроен: работает локальный резервный диалог. Данные хранятся в SQLite.</p>
-        <a href="/docs" target="_blank" rel="noopener noreferrer">Документация API ↗</a>
-      </div>
-    </aside>
-
-    <main class="main">
-      <header class="topbar">
-        <div><span class="eyebrow">ЛИЧНЫЙ ОРГАНАЙЗЕР</span><h1>Хорошего дня <span class="sun">✳</span></h1><p>Управляйте задачами и встречами в одном месте.</p></div>
-        <button id="add-event" class="button primary" type="button">＋ Новое событие</button>
-      </header>
-      <div class="workspace">
-        <section class="panel schedule-panel" aria-label="События">
-          <div class="panel-top"><div><h2>Расписание</h2><p id="schedule-subtitle">Загружаем записи…</p></div><span id="event-count" class="count">…</span></div>
-          <div class="stats" aria-label="Статистика"><div><small>Все записи</small><strong id="stat-total">—</strong></div><div><small>За период</small><strong id="stat-period">—</strong></div><div><small>Часовой пояс</small><strong id="stat-tz" class="tz">—</strong></div></div>
-          <div class="filters"><div class="filter-row"><label class="field"><span>С</span><input type="date" id="from-date"></label><label class="field"><span>По</span><input type="date" id="to-date"></label></div>
-            <div class="filter-row actions"><label class="sr-only" for="kind-filter">Тип записи</label><select id="kind-filter" aria-label="Тип записи"><option value="">Все типы</option><option value="task">Задачи</option><option value="meeting">Встречи</option><option value="reminder">Напоминания</option></select><button id="this-week" class="button subtle">Эта неделя</button><button id="all-time" class="button subtle">Все даты</button></div>
-            <label class="search-field"><span>⌕</span><input id="search" placeholder="Поиск, например: договор" aria-label="Поиск событий" autocomplete="off"></label></div>
-          <div id="events" class="events" aria-live="polite"><div class="empty">Загружаем события…</div></div>
-          <div class="footer-row"><span id="paging-label"></span><button id="load-more" class="button subtle" hidden>Показать ещё</button></div>
-        </section>
-
-        <section class="panel conversation-panel" aria-label="Ассистент">
-          <div class="panel-top"><div><h2>Ассистент</h2><p>DeepSeek с автоматическим резервным диалогом</p></div><span class="demo-pill" id="mode-pill">AUTO</span></div>
-          <div class="assistant-note"><span class="sparkle">✧</span><div><strong>Свободные формулировки</strong><p>При наличии ключа запросы обрабатывает DeepSeek через безопасные инструменты. Если API недоступен, автоматически работает базовый локальный диалог.</p></div></div>
-          <div class="messages" id="messages" role="log" aria-live="polite" aria-label="История диалога"></div>
-          <div class="suggestions"><button class="suggestion" data-say="Что у меня сегодня?">Планы на сегодня</button><button class="suggestion" data-say="Найди задачу про договор">Найти договор</button><button class="suggestion" data-say="Что запланировано на эту неделю?">Эта неделя</button></div>
-          <form id="chat-form" class="chat-form"><button id="mic" type="button" class="mic" title="Диктовка через браузер" aria-label="Диктовать">🎙</button><input id="chat-input" type="text" maxlength="2000" placeholder="Спросите или создайте задачу…" aria-label="Сообщение" autocomplete="off" required><button id="send" type="submit" class="send" aria-label="Отправить">➤</button></form>
-          <div class="voice-options"><label><input id="speak-responses" type="checkbox"> Озвучивать ответы</label><span id="mic-note" role="status">Диктовка зависит от браузера</span></div>
-        </section>
-      </div>
-    </main>
-  </div>
-
-  <dialog id="event-modal" aria-labelledby="modal-title">
-    <form id="event-form" class="modal-card" method="dialog">
-      <div class="modal-top"><div><span class="eyebrow">ПЛАНИРОВЩИК</span><h2 id="modal-title">Новое событие</h2></div><button class="close" id="close-modal" type="button" aria-label="Закрыть">✕</button></div>
-      <label>Тип события<select id="event-kind" required><option value="task">Задача</option><option value="meeting">Встреча</option><option value="reminder">Напоминание</option></select></label>
-      <label>Название<input id="event-title" maxlength="500" placeholder="Что нужно сделать?" required></label>
-      <div class="form-grid"><label>Дата<input type="date" id="event-date"></label><label>Время<input type="time" id="event-time" step="60"></label></div>
-      <label id="duration-container" hidden>Продолжительность встречи (минут)<input id="event-duration" type="number" min="1" max="1440" value="60"></label>
-      <p id="form-error" role="alert" class="form-error" hidden></p>
-      <div class="modal-actions"><button id="cancel-modal" class="button subtle" type="button">Отмена</button><button id="save-event" class="button primary" type="submit">Сохранить</button></div>
-    </form>
-  </dialog>
-  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f5f7" />
+    <meta name="description" content="Ритм — голосовой планировщик задач и встреч" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%23007AFF'/%3E%3Ctext x='50' y='68' font-size='52' text-anchor='middle' fill='white' font-family='-apple-system,sans-serif' font-weight='600'%3E%D0%A0%3C/text%3E%3C/svg%3E" />
+    <title>Ритм — планировщик</title>
+    <script type="module" crossorigin src="/static/assets/index-CmUxBk7X.js"></script>
+    <link rel="stylesheet" crossorigin href="/static/assets/index-kfpCDNXP.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
 </html>
