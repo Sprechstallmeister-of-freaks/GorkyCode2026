@@ -30,10 +30,10 @@ tests/
 **/tests/
 
 # dev- и Windows-скрипты, документация — рантайм их не читает
+# run.py не исключать: это production entry point для Docker и Render.
 *.md
 openapi.yaml
 ritm_http_e2e.py
-run.py
 start_windows.bat
 requirements-dev.txt
 

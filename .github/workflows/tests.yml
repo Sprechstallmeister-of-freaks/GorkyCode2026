@@ -13,3 +13,24 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build --tag ritm-ci .
+      - name: Start container and check API
+        run: |
+          docker run --detach --name ritm-ci --publish 127.0.0.1:8765:8000 --env ASSISTANT_IMPORT_SEED=0 ritm-ci
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8765/api/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs ritm-ci
+          exit 1
+      - name: Stop container
+        if: always()
+        run: docker rm --force ritm-ci || true
