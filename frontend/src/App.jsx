@@ -30,6 +30,8 @@ export default function App() {
     () => typeof Notification !== 'undefined' && typeof document !== 'undefined',
   )
   const [dueCount, setDueCount] = useState(0)
+  const [pollStatus, setPollStatus] = useState('idle') // idle | checking | error
+  const [lastPollError, setLastPollError] = useState<string | null>(null)
   const pollTimer = useRef(null)
 
   useEffect(() => {
@@ -40,6 +42,8 @@ export default function App() {
   const pollNotifications = useCallback(async () => {
     if (!supported || notificationPermission !== 'granted') return
     if (document.visibilityState !== 'visible') return
+    setPollStatus('checking')
+    setLastPollError(null)
     try {
       const data = await api.getDueNotifications()
       if (data.count > 0) {
@@ -54,7 +58,10 @@ export default function App() {
           })
         })
       }
+      setPollStatus('idle')
     } catch (e) {
+      setPollStatus('error')
+      setLastPollError(e instanceof Error ? e.message : String(e))
       // Тихая ошибка опроса — не прерываем работу приложения.
     }
   }, [supported, notificationPermission])
@@ -137,8 +144,25 @@ export default function App() {
               <span>—</span>
             )}
           </button>
+          <button
+            className={`icon-btn notification-check ${pollStatus === 'checking' ? 'checking' : ''}`}
+            onClick={pollNotifications}
+            title={
+              pollStatus === 'checking'
+                ? 'Проверяем уведомления…'
+                : pollStatus === 'error'
+                  ? 'Ошибка проверки: ' + lastPollError
+                  : 'Проверить уведомления сейчас'
+            }
+            disabled={!canNotify || pollStatus === 'checking'}
+          >
+            {pollStatus === 'checking' ? '⟳' : '?'}
+          </button>
           {dueCount > 0 && canNotify && (
             <span className="badge badge-notice">{dueCount}</span>
+          )}
+          {!supported && (
+            <span className="badge badge-notice" title="Уведомления не поддерживаются браузером">—</span>
           )}
         </div>
       </header>
