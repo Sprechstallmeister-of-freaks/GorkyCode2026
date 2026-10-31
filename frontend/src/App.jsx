@@ -31,7 +31,7 @@ export default function App() {
   )
   const [dueCount, setDueCount] = useState(0)
   const [pollStatus, setPollStatus] = useState('idle') // idle | checking | error
-  const [lastPollError, setLastPollError] = useState<string | null>(null)
+  const [lastPollError, setLastPollError] = useState(null)
   const pollTimer = useRef(null)
 
   useEffect(() => {
