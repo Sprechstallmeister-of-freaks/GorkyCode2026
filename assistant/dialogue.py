@@ -76,10 +76,22 @@ class RuleDialogue:
             self.planner.append_dialogue(session_id, raw, result.answer)
         return result
 
+    @staticmethod
+    def _looks_like_schedule_question(s: str) -> bool:
+        """Вопрос о расписании, а не ответ на уточнение создания."""
+        if re.search(r"\b(?:добавь|создай|поставь|запланируй|запиши|напомни)\b", s):
+            return False
+        return bool(re.search(r"\b(?:что|какие|сколько|есть\s+ли|покажи|найди)\b", s))
+
     def _finish_pending(self, raw, s, sid, state) -> ChatOutput:
         if s in ("отмена", "отмени", "не надо", "стоп"):
             self.planner.set_session(sid, active_event_id=state["active_event_id"])
             return ChatOutput(answer="Создание отменено.", session_id=sid, action="cancel_pending")
+        if self._looks_like_schedule_question(s):
+            # Вопрос о планах не должен поглощаться незавершённым созданием:
+            # снимаем pending и отвечаем на вопрос.
+            self.planner.set_session(sid, active_event_id=state["active_event_id"])
+            return self._route(raw, s, sid, {**state, "pending_action": None})
         data = dict(state["pending_data"])
         parsed = parse_datetime(raw, tz=self.planner.default_timezone, now=self.clock())
         clock = parsed.clock
@@ -158,6 +170,14 @@ class RuleDialogue:
             self.planner.set_session(sid, active_event_id=event.id)
             return ChatOutput(answer="Перенесено: " + pretty(event), session_id=sid, action="update", event=event)
 
+        after_query = (
+            re.search(r"\bпосле\s+(?!(?:обеда|полудня|работы|учебы)\b)", s)
+            and not re.search(r"\b(?:добавь|создай|поставь|запланируй|напомни)\b", s)
+            and (raw.rstrip().endswith("?") or re.search(r"\b(?:что|какие|есть|сколько)\b", s))
+        )
+        if after_query:
+            return self._answer_after_query(raw, s, sid, state)
+
         meeting = bool(re.search(r"\b(?:встреча|встречу|встречи)\b", s))
         reminder = bool(re.search(r"\b(?:напомни|напоминание)\b", s))
         task = bool(re.search(r"\b(?:задачу|задача|нужно|надо)\b", s))
@@ -200,3 +220,81 @@ class RuleDialogue:
 
         return ChatOutput(answer="Пока я понимаю только базовые формулировки: создать задачу/встречу, показать планы, найти или перенести запись. Для свободного диалога подключим LLM.",
                           session_id=sid, action="unrecognized", needs_llm=True)
+
+    def _answer_after_query(self, raw, s, sid, state) -> ChatOutput:
+        """Вопрос вида «после встречи с командой завтра что-то есть?».
+
+        Находит событие-точку отсчёта и возвращает события того же дня
+        позже её по времени. Без создания записей и без LLM.
+        """
+        parsed = parse_datetime(raw, tz=self.planner.default_timezone, now=self.clock())
+        day = parsed.day
+
+        # Текст ссылки на событие — между «после» и вопросительной частью.
+        tail = s.split("после", 1)[1]
+        for phrase in parsed.consumed:
+            tail = re.sub(re.escape(phrase), " ", tail)
+        tail = re.sub(r"\b(?:встречи|встречу|встреча|задачи|задачу|напоминания|события|мероприятия)\b", " ", tail)
+        tail = re.sub(r"\b(?:нее|него|этого|этой)\b", " ", tail)
+        tail = re.split(r"\b(?:что|какие|есть|сколько|будет|будут|осталось|стоит|дальше)\b", tail, maxsplit=1)[0]
+        query = re.sub(r"\s+", " ", tail).strip(" .,?!:—-")
+
+        kind = None
+        if re.search(r"\bвстреч\w*\b", s):
+            kind = Kind.meeting
+        elif re.search(r"\bзадач\w*\b", s):
+            kind = Kind.task
+        elif re.search(r"\bнапоминан\w*\b", s):
+            kind = Kind.reminder
+
+        reference = None
+        if query:
+            candidates, _ = self.planner.search(query, kind=kind, limit=8)
+            if day:
+                candidates = [e for e in candidates if e.scheduled_date == day]
+            if candidates:
+                reference = sorted(
+                    candidates,
+                    key=lambda e: (e.scheduled_date or date.max, e.scheduled_time or time(23, 59)),
+                )[0]
+        elif day and kind:
+            # «После встречи завтра …» без названия: берём первую встречу дня.
+            items, _ = self.planner.list(from_date=day, to_date=day, kind=kind, limit=50)
+            if items:
+                reference = sorted(items, key=lambda e: e.scheduled_time or time(23, 59))[0]
+        elif state.get("active_event_id"):
+            # «После неё что-то есть?» — используем текущее событие контекста.
+            try:
+                reference = self.planner.get(state["active_event_id"])
+            except NotFoundError:
+                reference = None
+
+        if reference is None:
+            return ChatOutput(
+                answer="Не нашёл, после какого события смотреть. Уточни название и дату, например: «после встречи с командой завтра что-то есть?».",
+                session_id=sid, action="clarify")
+        if not reference.scheduled_date:
+            return ChatOutput(
+                answer=f"У «{reference.title}» нет даты, поэтому не могу определить, что идёт после. Уточни событие с датой.",
+                session_id=sid, action="clarify")
+
+        ref_day = reference.scheduled_date
+        ref_time = reference.scheduled_time
+        items, _ = self.planner.list(from_date=ref_day, to_date=ref_day, limit=50)
+        after = []
+        for event in items:
+            if event.id == reference.id:
+                continue
+            if ref_time is None:
+                after.append(event)  # у точки нет времени — показываем остальные события дня
+            elif event.scheduled_time and event.scheduled_time > ref_time:
+                after.append(event)
+        after.sort(key=lambda e: e.scheduled_time or time(23, 59))
+
+        when = ref_day.strftime("%d.%m.%Y") + (f" в {ref_time.strftime('%H:%M')}" if ref_time else "")
+        if after:
+            answer = f"После «{reference.title}» ({when}):\n" + "\n".join(pretty(e) for e in after)
+        else:
+            answer = f"После «{reference.title}» ({when}) ничего не запланировано."
+        self.planner.set_session(sid, active_event_id=reference.id)
+        return ChatOutput(answer=answer, session_id=sid, action="list", events=after)

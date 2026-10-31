@@ -82,3 +82,30 @@ def test_pending_bare_hour_reply(planner):
     assert result.action=='create'
     assert result.event.scheduled_date==date(2026,10,30)
     assert result.event.scheduled_time==time(10,0)
+
+
+def test_after_event_query(planner):
+    # «после встречи с командой завтра что-то есть?» — вопрос о расписании,
+    # а не создание встречи. Должны вернуться только события ПОСЛЕ встречи.
+    chat=RuleDialogue(planner,clock=lambda:NOW)
+    chat.process('Добавь встречу с командой завтра','after')
+    chat.process('в 15:00','after')
+    chat.process('Напомни завтра в 10:00 утренний звонок','after')
+    chat.process('Напомни завтра в 18:00 позвонить Ивану','after')
+    r=chat.process('после встречи с командой завтра что-то есть?','after')
+    assert r.action=='list'
+    assert any('позвонить Ивану' in e.title for e in r.events)
+    assert all(e.kind!='meeting' for e in r.events)
+    assert all(e.scheduled_time and e.scheduled_time>time(15,0) for e in r.events)
+
+
+def test_schedule_question_during_pending(planner):
+    # Вопрос о планах во время незавершённого создания не должен
+    # поглощаться уточнением («На какое время?»).
+    chat=RuleDialogue(planner,clock=lambda:NOW)
+    a=chat.process('Добавь встречу с командой завтра','pq')
+    assert a.action=='clarify'
+    r=chat.process('Что у меня сегодня?','pq')
+    assert r.action=='list'
+    r2=chat.process('после встречи с командой завтра что-то есть?','pq')
+    assert 'На какое время' not in r2.answer
