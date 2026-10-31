@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import date
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -13,12 +12,12 @@ from pydantic import BaseModel, Field
 
 from .config import Settings, from_env, PROJECT_ROOT
 from .database import Database
-from .dialogue import RuleDialogue
-from .routing import ChatRouter
+from .deepseek import DeepSeekClient
+from .deepseek_provider import DeepSeekProvider
 from .llm_provider import LLMProvider
 from .models import ChatInput, ChatOutput, Event, EventCreate, EventList, EventPatch, Kind, Status, SearchResponse
+from .routing import ChatRouter
 from .service import Planner, NotFoundError, DomainError, ConflictError
-from .tools import ToolRegistry
 
 
 class CancelRequest(BaseModel):
@@ -28,23 +27,46 @@ class CancelRequest(BaseModel):
 class Health(BaseModel):
     status: str
     llm_connected: bool
+    llm_configured: bool
+    llm_model: str | None
     timezone: str
     records: int
 
 
-def create_app(settings: Settings | None = None, *, llm_provider: LLMProvider | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, llm_provider: LLMProvider | None = None,
+               deepseek_client: DeepSeekClient | None = None) -> FastAPI:
+    if llm_provider is not None and deepseek_client is not None:
+        raise ValueError("Pass either llm_provider or deepseek_client, not both")
     cfg = settings or from_env()
     db = Database(cfg.db_path)
     planner = Planner(db, cfg.timezone)
     if cfg.import_seed and cfg.seed_csv:
         planner.import_csv(cfg.seed_csv)
-    dialogue = ChatRouter(planner, provider=llm_provider)
+
+    client = deepseek_client
+    provider = llm_provider
+    if provider is None:
+        if client is None and cfg.deepseek_api_key:
+            client = DeepSeekClient(api_key=cfg.deepseek_api_key, base_url=cfg.deepseek_base_url,
+                                    model=cfg.deepseek_model, timeout_seconds=cfg.deepseek_timeout_seconds)
+        if client is not None:
+            provider = DeepSeekProvider(client)
+    dialogue = ChatRouter(planner, provider=provider)
     tools = dialogue.tools
-    app = FastAPI(title="Задачи и встречи — API", version="1.1.0",
-                  description="LLM-independent planner. Swagger: /docs")
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        if client is not None:
+            client.close()
+
+    app = FastAPI(title="Задачи и встречи — API", version="1.2.0",
+                  description="DeepSeek tool calling, deterministic planner and rule fallback. Swagger: /docs",
+                  lifespan=lifespan)
     app.state.planner = planner
     app.state.dialogue = dialogue
     app.state.tools = tools
+    app.state.deepseek = client
 
     @app.exception_handler(NotFoundError)
     async def not_found(_request: Request, exc: NotFoundError):
@@ -64,7 +86,10 @@ def create_app(settings: Settings | None = None, *, llm_provider: LLMProvider | 
     @app.get("/api/health", response_model=Health)
     def health():
         _, count = planner.list(limit=1, include_cancelled=True)
-        return Health(status="ok", llm_connected=dialogue.llm_connected, timezone=cfg.timezone, records=count)
+        model = cfg.deepseek_model if client is not None else "custom" if dialogue.llm_configured else None
+        return Health(status="ok", llm_connected=dialogue.llm_connected,
+                      llm_configured=dialogue.llm_configured, llm_model=model,
+                      timezone=cfg.timezone, records=count)
 
     @app.post("/api/events", response_model=Event, status_code=201)
     def create_event(payload: EventCreate):
@@ -126,7 +151,7 @@ def create_app(settings: Settings | None = None, *, llm_provider: LLMProvider | 
 
     @app.get("/api/tools")
     def tool_specs():
-        return {"tools": tools.specs(), "note": "Schemas for a future LLM. Execution is internal, not an unauthenticated public endpoint."}
+        return {"tools": tools.specs(), "note": "Static schemas for LLM tool calling. Execution is internal, not a public arbitrary-tool endpoint."}
 
     @app.get("/", include_in_schema=False)
     def index():

@@ -1,11 +1,11 @@
 openapi: 3.0.3
 info:
   title: Ритм — API задач, встреч и напоминаний
-  version: 1.1.0
-  description: 'HTTP API текущего локального бэкенда «Ритм». FastAPI, SQLite, rule-based диалог и подключаемый LLMProvider.
-    Модель не исполняет SQL: она возвращает JSON с именем одного из шести статических инструментов и аргументами;
-    их проверяет Pydantic перед выполнением внутри сервера. LLM не подключена по умолчанию. Для отмены записи требуется
-    отдельное подтверждение пользователя. Документация соответствует текущему коду, не описывает будущие функции.'
+  version: 1.2.0
+  description: 'HTTP API локального бэкенда «Ритм». FastAPI, SQLite, ChatRouter, rule-based fallback и опциональный DeepSeekProvider.
+    Модель не исполняет SQL: она выбирает один из шести статических инструментов и передаёт JSON-аргументы;
+    их проверяет Pydantic перед выполнением внутри сервера. Без DEEPSEEK_API_KEY используются локальные правила.
+    Для отмены записи требуется отдельное подтверждение пользователя.'
 servers:
 - url: http://127.0.0.1:8000
   description: Локальный сервер разработки
@@ -487,6 +487,13 @@ components:
           type: boolean
           title: Needs Llm
           default: false
+        mode:
+          type: string
+          enum:
+          - deepseek
+          - fallback
+          title: Mode
+          default: fallback
       type: object
       required:
       - answer
@@ -660,6 +667,13 @@ components:
         llm_connected:
           type: boolean
           title: Llm Connected
+        llm_configured:
+          type: boolean
+          title: Llm Configured
+        llm_model:
+          type: string
+          nullable: true
+          title: Llm Model
         timezone:
           type: string
           title: Timezone
@@ -670,6 +684,8 @@ components:
       required:
       - status
       - llm_connected
+      - llm_configured
+      - llm_model
       - timezone
       - records
       title: Health

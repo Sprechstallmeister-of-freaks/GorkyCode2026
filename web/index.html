@@ -17,7 +17,7 @@
       <div class="nav-item"><span>◷</span> Локальный режим</div>
       <div class="sidebar-bottom">
         <div class="status-dot"><span></span> Бизнес-логика готова</div>
-        <p>Без облачной LLM. Данные хранятся в SQLite на этом компьютере.</p>
+        <p id="llm-note">DeepSeek не настроен: работает локальный резервный диалог. Данные хранятся в SQLite.</p>
         <a href="/docs" target="_blank" rel="noopener noreferrer">Документация API ↗</a>
       </div>
     </aside>
@@ -39,8 +39,8 @@
         </section>
 
         <section class="panel conversation-panel" aria-label="Ассистент">
-          <div class="panel-top"><div><h2>Ассистент</h2><p>Диалоговый деморежим без LLM</p></div><span class="demo-pill">DEMO</span></div>
-          <div class="assistant-note"><span class="sparkle">✧</span><div><strong>Работает уже сейчас</strong><p>Можно написать «Что у меня завтра?», «Найди договор» или «Добавь встречу с Иваном завтра в 15:00». Сложный естественный язык подключим через LLM.</p></div></div>
+          <div class="panel-top"><div><h2>Ассистент</h2><p>DeepSeek с автоматическим резервным диалогом</p></div><span class="demo-pill" id="mode-pill">AUTO</span></div>
+          <div class="assistant-note"><span class="sparkle">✧</span><div><strong>Свободные формулировки</strong><p>При наличии ключа запросы обрабатывает DeepSeek через безопасные инструменты. Если API недоступен, автоматически работает базовый локальный диалог.</p></div></div>
           <div class="messages" id="messages" role="log" aria-live="polite" aria-label="История диалога"></div>
           <div class="suggestions"><button class="suggestion" data-say="Что у меня сегодня?">Планы на сегодня</button><button class="suggestion" data-say="Найди задачу про договор">Найти договор</button><button class="suggestion" data-say="Что запланировано на эту неделю?">Эта неделя</button></div>
           <form id="chat-form" class="chat-form"><button id="mic" type="button" class="mic" title="Диктовка через браузер" aria-label="Диктовать">🎙</button><input id="chat-input" type="text" maxlength="2000" placeholder="Спросите или создайте задачу…" aria-label="Сообщение" autocomplete="off" required><button id="send" type="submit" class="send" aria-label="Отправить">➤</button></form>

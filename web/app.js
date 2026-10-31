@@ -105,6 +105,11 @@ async function loadHealth() {
     state.timezone = data.timezone;
     $('stat-tz').textContent = data.timezone.replace('Europe/', '').replace('Asia/', '');
     $('stat-total').textContent = data.records;
+    $('llm-note').textContent = !data.llm_configured
+      ? 'DeepSeek не настроен: работает локальный резервный диалог. Данные хранятся в SQLite.'
+      : data.llm_connected
+        ? `DeepSeek ${data.llm_model} доступен. При сбое автоматически включится резервный диалог.`
+        : `DeepSeek ${data.llm_model} настроен; доступность будет проверена при первом запросе. Есть автоматический fallback.`;
     const [from, to] = weekBounds();
     $('from-date').value = from; $('to-date').value = to;
     $('schedule-subtitle').textContent = 'На выбранный период';
@@ -208,7 +213,8 @@ async function chatSubmit(event) {
   try {
     const reply = await request('/api/chat', {method:'POST',body:JSON.stringify({message:text,session_id:sessionId})});
     appendMessage('assistant',reply.answer); speak(reply.answer);
-    if(['create','update','list','search'].includes(reply.action)) await loadEvents();
+    $('mode-pill').textContent = reply.mode === 'deepseek' ? 'DEEPSEEK' : 'FALLBACK';
+    if(['create','update','cancel','list','search','create_event','update_event','cancel_event','list_events','search_events'].includes(reply.action)) await loadEvents();
   } catch(err) { appendMessage('assistant','Ошибка: '+err.message); }
   finally {state.loading=false;$('send').disabled=false;$('chat-input').focus();}
 }

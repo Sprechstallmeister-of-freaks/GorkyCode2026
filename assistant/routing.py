@@ -35,7 +35,11 @@ class ChatRouter:
         self.rules = rules or RuleDialogue(planner)
         self.provider = provider or NullLLMProvider()
         self.tools = ToolRegistry(planner)
-        self.llm_connected = not isinstance(self.provider, NullLLMProvider)
+        self.llm_configured = not isinstance(self.provider, NullLLMProvider)
+
+    @property
+    def llm_connected(self) -> bool:
+        return bool(getattr(self.provider, "connected", self.llm_configured))
 
     def process(self, message: str, session_id: str) -> ChatOutput:
         """Exactly one user+assistant history pair per incoming message."""
@@ -51,6 +55,7 @@ class ChatRouter:
                     result = self._interpret(raw, session_id, state)
                 elif result.action == "search" and not result.events:
                     result = self._search_with_synonyms(raw, session_id, state)
+                result = self._maybe_describe(raw, result, session_id, state)
         except (ValueError, TypeError, ValidationError) as exc:
             result = ChatOutput(answer=f"Некорректные параметры: {exc}", session_id=session_id, action="error")
         self.planner.append_dialogue(session_id, raw, result.answer)
@@ -71,7 +76,9 @@ class ChatRouter:
         if command.tool == "unknown":
             return ChatOutput(answer="Не удалось определить действие. Уточни, что нужно создать, найти или изменить.",
                               session_id=sid, action="unrecognized", needs_llm=True)
-        return self._execute(command, sid, state)
+        result = self._execute(command, sid, state)
+        result.mode = "deepseek"
+        return result
 
     def _execute(self, command: ParsedCommand, sid: str, state: dict, *, confirmed: bool = False) -> ChatOutput:
         name = command.tool
@@ -204,6 +211,29 @@ class ChatRouter:
             return self._execute(ParsedCommand(tool=data["tool"], arguments=args), sid, state)
         return ChatOutput(answer="Неизвестное состояние диалога.", session_id=sid, action="error")
 
+    def _maybe_describe(self, raw: str, result: ChatOutput, sid: str, state: dict) -> ChatOutput:
+        """Hybrid responses: LLM may phrase reads, never mutation confirmations."""
+        describe = getattr(self.provider, "describe", None)
+        if not self.llm_configured or not callable(describe):
+            return result
+        if result.action not in {"list", "search", "get", "list_events", "search_events", "get_event"}:
+            return result
+        events = result.events or ([result.event] if result.event else [])
+        if not events:
+            return result
+        payload = {"action": result.action, "count": len(events),
+                   "items": [event.model_dump(mode="json") for event in events]}
+        try:
+            answer = describe(raw, payload, self._context(sid, state))
+        except Exception:
+            # The actual read result is already available; deterministic text is
+            # safer than repeating the request or discarding the records.
+            return result
+        if isinstance(answer, str) and answer.strip():
+            result.answer = answer.strip()
+            result.mode = "deepseek"
+        return result
+
     def _search_with_synonyms(self, query: str, sid: str, state: dict) -> ChatOutput:
         # Do not pass complete raw commands to search; this step is reserved for
         # plain query strings. Rechecking original terms is harmless if unmatched.
@@ -225,4 +255,5 @@ class ChatRouter:
             self.planner.set_session(sid, active_event_id=events[0].id)
         answer = "Ничего подходящего не нашлось. Уточни название события." if not events else \
             "Найдено по похожим формулировкам:\n" + "\n".join(pretty(e) for e in events)
-        return ChatOutput(answer=answer, session_id=sid, action="search", events=events)
+        return ChatOutput(answer=answer, session_id=sid, action="search", events=events,
+                          mode="deepseek" if variants else "fallback")

@@ -120,3 +120,4 @@ class ChatOutput(BaseModel):
     event: Event | None = None
     events: list[Event] = Field(default_factory=list)
     needs_llm: bool = False
+    mode: Literal["deepseek", "fallback"] = "fallback"
