@@ -1,0 +1,819 @@
+openapi: 3.0.3
+info:
+  title: Ритм — API задач, встреч и напоминаний
+  version: 1.1.0
+  description: 'HTTP API текущего локального бэкенда «Ритм». FastAPI, SQLite, rule-based диалог и подключаемый LLMProvider.
+    Модель не исполняет SQL: она возвращает JSON с именем одного из шести статических инструментов и аргументами;
+    их проверяет Pydantic перед выполнением внутри сервера. LLM не подключена по умолчанию. Для отмены записи требуется
+    отдельное подтверждение пользователя. Документация соответствует текущему коду, не описывает будущие функции.'
+servers:
+- url: http://127.0.0.1:8000
+  description: Локальный сервер разработки
+tags:
+- name: Service
+  description: Проверка доступности и статические контракты инструментов
+- name: Events
+  description: Создание, просмотр, изменение и двухэтапная отмена событий
+- name: Search
+  description: Лексический / fuzzy поиск по SQLite
+- name: Dialogue
+  description: Обработка сообщений и история сессий
+paths:
+  /api/health:
+    get:
+      summary: Состояние сервера
+      operationId: health_api_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+      tags:
+      - Service
+      description: Возвращает статус, состояние подключения LLM, IANA timezone и количество событий.
+  /api/events:
+    post:
+      summary: Создать событие
+      operationId: create_event_api_events_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventCreate'
+            example:
+              kind: meeting
+              title: Созвон с командой
+              scheduled_date: '2026-11-04'
+              scheduled_time: '15:00'
+              duration_minutes: 60
+              timezone: Europe/Moscow
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '422':
+          description: Ошибка валидации или бизнес-правил
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Конфликт интервалов встреч
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      tags:
+      - Events
+      description: Создаёт задачу, напоминание или встречу. Для напоминания и встречи обязательны дата и время.
+        При пересечении встреч возвращается 409.
+    get:
+      summary: Список событий
+      operationId: list_events_api_events_get
+      parameters:
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          title: From Date
+          type: string
+          format: date
+          nullable: true
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          title: To Date
+          type: string
+          format: date
+          nullable: true
+      - name: kind
+        in: query
+        required: false
+        schema:
+          title: Kind
+          allOf:
+          - $ref: '#/components/schemas/Kind'
+          nullable: true
+      - name: include_cancelled
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+          title: Include Cancelled
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventList'
+        '422':
+          description: Неверные параметры фильтра
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      tags:
+      - Events
+      description: Получить события из SQLite. Границы дат включительны, поддерживаются фильтры, пагинация и отменённые
+        записи.
+  /api/search:
+    get:
+      summary: Поиск событий
+      operationId: search_api_search_get
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 2
+          maxLength: 500
+          title: Q
+      - name: kind
+        in: query
+        required: false
+        schema:
+          title: Kind
+          allOf:
+          - $ref: '#/components/schemas/Kind'
+          nullable: true
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '422':
+          description: Неверный поисковый запрос или параметры
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      tags:
+      - Search
+      description: Лексический/fuzzy поиск по содержимому событий в SQLite. Семантический поиск моделью здесь не
+        реализован.
+  /api/events/{event_id}:
+    get:
+      summary: Получить событие
+      operationId: get_event_api_events__event_id__get
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Event Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '404':
+          description: Событие не найдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      tags:
+      - Events
+      description: Возвращает событие по идентификатору или 404.
+    patch:
+      summary: Изменить событие
+      operationId: update_event_api_events__event_id__patch
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Event Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventPatch'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '422':
+          description: Неверные параметры изменения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Событие не найдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Конфликт версии либо запрещённая отмена через PATCH
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      tags:
+      - Events
+      description: Частичное обновление; status=cancelled запрещён (409). expected_version используется для контроля
+        конкурентного обновления.
+    delete:
+      summary: Прямая отмена отключена
+      description: 'Этот маршрут существует ради обратной совместимости, но всегда отвечает 409: нужна отдельная
+        процедура подтверждения.'
+      operationId: cancel_event_api_events__event_id__delete
+      deprecated: true
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Event Id
+      - name: expected_version
+        in: query
+        required: false
+        schema:
+          title: Expected Version
+          type: integer
+          nullable: true
+      responses:
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '409':
+          description: Прямая отмена запрещена; требуется двухэтапное подтверждение
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      tags:
+      - Events
+  /api/events/{event_id}/cancel-request:
+    post:
+      summary: Запросить подтверждение отмены
+      description: Не меняет событие. Сохраняет ожидающую отмену в сессии; затем пользователь должен отдельно ответить
+        «да» через POST /api/chat с тем же session_id.
+      operationId: request_cancel_api_events__event_id__cancel_request_post
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Event Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelRequest'
+            example:
+              session_id: manual_test
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatOutput'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '404':
+          description: Событие не найдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Событие уже отменено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      tags:
+      - Events
+  /api/chat:
+    post:
+      summary: Отправить текст ассистенту
+      operationId: chat_api_chat_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatInput'
+            example:
+              message: Что у меня сегодня?
+              session_id: manual_test
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatOutput'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      tags:
+      - Dialogue
+      description: Rule-based обработка, при невозможности — опциональный LLMProvider. Ответ может содержать уточнение
+        или подтверждение; LLM не подключена по умолчанию.
+  /api/sessions/{session_id}/history:
+    get:
+      summary: История сессии
+      operationId: history_api_sessions__session_id__history_get
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryResponse'
+        '422':
+          description: Недопустимый session_id или limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      tags:
+      - Dialogue
+      description: Последние сообщения сессии, в хронологическом порядке.
+  /api/tools:
+    get:
+      summary: Каталог статических инструментов
+      operationId: tool_specs_api_tools_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolsResponse'
+      tags:
+      - Service
+      description: Возвращает шесть именованных инструментов и Pydantic JSON Schema их аргументов. Это каталог для
+        модели, а не публичный endpoint исполнения инструментов.
+components:
+  schemas:
+    CancelRequest:
+      properties:
+        session_id:
+          type: string
+          maxLength: 80
+          minLength: 1
+          pattern: ^[A-Za-z0-9_-]+$
+          title: Session Id
+      type: object
+      required:
+      - session_id
+      title: CancelRequest
+    ChatInput:
+      properties:
+        message:
+          type: string
+          maxLength: 2000
+          minLength: 1
+          title: Message
+        session_id:
+          type: string
+          maxLength: 80
+          minLength: 1
+          pattern: ^[A-Za-z0-9_-]+$
+          title: Session Id
+          default: default
+      type: object
+      required:
+      - message
+      title: ChatInput
+    ChatOutput:
+      properties:
+        answer:
+          type: string
+          title: Answer
+        session_id:
+          type: string
+          title: Session Id
+        action:
+          type: string
+          title: Action
+        event:
+          allOf:
+          - $ref: '#/components/schemas/Event'
+          nullable: true
+        events:
+          items:
+            $ref: '#/components/schemas/Event'
+          type: array
+          title: Events
+        needs_llm:
+          type: boolean
+          title: Needs Llm
+          default: false
+      type: object
+      required:
+      - answer
+      - session_id
+      - action
+      title: ChatOutput
+      description: action отражает исход диалога, включая list, clarify, conflict, cancel_event и др.; это строка,
+        не закрытый enum.
+    Event:
+      properties:
+        id:
+          type: integer
+          title: Id
+        kind:
+          $ref: '#/components/schemas/Kind'
+        title:
+          type: string
+          title: Title
+        scheduled_date:
+          title: Scheduled Date
+          type: string
+          format: date
+          nullable: true
+        scheduled_time:
+          title: Scheduled Time
+          type: string
+          format: time
+          nullable: true
+        duration_minutes:
+          title: Duration Minutes
+          type: integer
+          nullable: true
+        timezone:
+          type: string
+          title: Timezone
+        status:
+          $ref: '#/components/schemas/Status'
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+        source:
+          type: string
+          title: Source
+        version:
+          type: integer
+          title: Version
+      type: object
+      required:
+      - id
+      - kind
+      - title
+      - scheduled_date
+      - scheduled_time
+      - duration_minutes
+      - timezone
+      - status
+      - created_at
+      - updated_at
+      - source
+      - version
+      title: Event
+    EventCreate:
+      properties:
+        kind:
+          $ref: '#/components/schemas/Kind'
+        title:
+          type: string
+          maxLength: 500
+          minLength: 1
+          title: Title
+        scheduled_date:
+          title: Scheduled Date
+          type: string
+          format: date
+          nullable: true
+        scheduled_time:
+          title: Scheduled Time
+          type: string
+          format: time
+          nullable: true
+        duration_minutes:
+          title: Duration Minutes
+          type: integer
+          maximum: 1440.0
+          minimum: 1.0
+          nullable: true
+        timezone:
+          title: Timezone
+          type: string
+          nullable: true
+      additionalProperties: false
+      type: object
+      required:
+      - kind
+      - title
+      title: EventCreate
+      description: Для kind=meeting и kind=reminder scheduled_date и scheduled_time обязательны по межполевому валидатору
+        Pydantic; duration_minutes допустим только для meeting. timezone при передаче должна быть допустимой зоной.
+    EventList:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/Event'
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+      type: object
+      required:
+      - items
+      - total
+      title: EventList
+    EventPatch:
+      properties:
+        title:
+          title: Title
+          type: string
+          maxLength: 500
+          minLength: 1
+          nullable: true
+        scheduled_date:
+          title: Scheduled Date
+          type: string
+          format: date
+          nullable: true
+        scheduled_time:
+          title: Scheduled Time
+          type: string
+          format: time
+          nullable: true
+        duration_minutes:
+          title: Duration Minutes
+          type: integer
+          maximum: 1440.0
+          minimum: 1.0
+          nullable: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/Status'
+          nullable: true
+        expected_version:
+          title: Expected Version
+          type: integer
+          minimum: 1.0
+          nullable: true
+      additionalProperties: false
+      type: object
+      title: EventPatch
+      description: 'PATCH: все поля необязательны; значение status=cancelled запрещено HTTP-слоем. Отмена возможна
+        только по двухшаговому сценарию.'
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    Health:
+      properties:
+        status:
+          type: string
+          title: Status
+        llm_connected:
+          type: boolean
+          title: Llm Connected
+        timezone:
+          type: string
+          title: Timezone
+        records:
+          type: integer
+          title: Records
+      type: object
+      required:
+      - status
+      - llm_connected
+      - timezone
+      - records
+      title: Health
+    Kind:
+      type: string
+      enum:
+      - task
+      - reminder
+      - meeting
+      title: Kind
+    SearchResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/Event'
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        strategy:
+          type: string
+          const: lexical_fuzzy
+          title: Strategy
+          default: lexical_fuzzy
+      type: object
+      required:
+      - items
+      - total
+      title: SearchResponse
+    Status:
+      type: string
+      enum:
+      - open
+      - done
+      - cancelled
+      title: Status
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    ErrorResponse:
+      title: ErrorResponse
+      type: object
+      properties:
+        detail:
+          description: Текст ошибки либо структурированный список ошибок FastAPI/Pydantic
+          oneOf:
+          - type: string
+          - type: array
+            items:
+              $ref: '#/components/schemas/ValidationError'
+      required:
+      - detail
+    DialogueMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          description: user или assistant
+          enum:
+          - user
+          - assistant
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - role
+      - content
+      - created_at
+    HistoryResponse:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/DialogueMessage'
+      required:
+      - messages
+    StaticTool:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+          - function
+        function:
+          type: object
+          properties:
+            name:
+              type: string
+              enum:
+              - create_event
+              - list_events
+              - search_events
+              - get_event
+              - update_event
+              - cancel_event
+            description:
+              type: string
+            parameters:
+              type: object
+              description: JSON Schema, сформированная Pydantic для аргументов инструмента
+              additionalProperties: true
+          required:
+          - name
+          - description
+          - parameters
+      required:
+      - type
+      - function
+    ToolsResponse:
+      type: object
+      properties:
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/StaticTool'
+        note:
+          type: string
+      required:
+      - tools
+      - note
