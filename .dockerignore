@@ -1,0 +1,48 @@
+# VCS / IDE / окружение
+.git/
+.github/
+.idea/
+.vscode/
+.DS_Store
+.env
+.env.example
+.gitignore
+.gitattributes
+
+# зависимости и кэш
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# локальные БД (в контейнере живут на volume)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+
+# тесты
+pytest.ini
+tests/
+**/tests/
+
+# dev- и Windows-скрипты, документация — рантайм их не читает
+*.md
+openapi.yaml
+ritm_http_e2e.py
+run.py
+start_windows.bat
+requirements-dev.txt
+
+# файлы сборки не нужны внутри образа
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# сохранённые браузером страницы из корня (≈5 МБ)
+Обработка CSV файла.html
+Обработка CSV файла_files/
+.ipynb_checkpoints/

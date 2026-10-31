@@ -1,0 +1,25 @@
+services:
+  assistant:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    # .env опционален: без него всё поднимется на дефолтах config.py (офлайн-режим).
+    env_file:
+      - path: .env
+        required: false
+    # Приоритет: environment > env_file > ENV образа. Гарантируем, что БД всегда
+    # на volume, даже если в .env скопирован относительный путь из .env.example.
+    environment:
+      ASSISTANT_DB: /data/assistant.db
+    volumes:
+      - assistant_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  assistant_data:
