@@ -33,6 +33,8 @@ NO_WORDS = {"нет", "не отменяй", *CANCEL_WORDS}
 ORDINALS = {"первую": 0, "первый": 0, "первое": 0, "1": 0,
             "вторую": 1, "второй": 1, "второе": 1, "2": 1,
             "третью": 2, "третий": 2, "третье": 2, "3": 2}
+CLARIFICATION_ATTEMPTS_KEY = "_clarification_attempts"
+MAX_CLARIFICATION_ATTEMPTS = 2
 CONTEXT_DATE_REFERENCE = re.compile(
     r"\b(?:на|в)\s+(?:этот|тот)(?:\s+же)?\s+день\b|"
     r"\bна\s+(?:эту|ту)(?:\s+же)?\s+дату\b",
@@ -81,12 +83,18 @@ class ChatRouter:
                 # Transient server-side context; it is never supplied as an
                 # event_id or trusted LLM argument and is not persisted in JSON.
                 state["_referenced_date"] = referenced_date
-            if state.get("pending_action") in {
+            if state.get("pending_action") == "create_event":
+                # Pending из RuleDialogue продолжается тем же обработчиком, а
+                # общий guard не даёт бесконечно задавать один и тот же вопрос.
+                result = self.rules.process(raw, session_id, record=False)
+                result = self._guard_clarification_loop(result, session_id, state)
+            elif state.get("pending_action") in {
                 "select_event", "select_after_event", "confirm_cancel", "complete_command"
             }:
                 # Уточнения и подтверждения не отдаём модели: серверное состояние
                 # содержит защищённые аргументы и версию отменяемого события.
                 result = self._continue(raw, session_id, state)
+                result = self._guard_clarification_loop(result, session_id, state)
             elif self.llm_configured:
                 result = self._process_with_llm(effective_raw, session_id, state)
                 if result.action == "unrecognized":
@@ -183,6 +191,61 @@ class ChatRouter:
             answer="Не удалось распознать задачу. Попробуй перефразировать.",
             session_id=sid, action="unrecognized", needs_llm=True,
         )
+
+    def _guard_clarification_loop(
+        self, result: ChatOutput, sid: str, previous_state: dict,
+    ) -> ChatOutput:
+        """Остановить pending после двух ответов без новых полезных данных."""
+        if result.action != "clarify":
+            return result
+        current = self.planner.get_session(sid)
+        pending = previous_state.get("pending_action")
+        if not pending or current.get("pending_action") != pending:
+            return result
+
+        previous_data = dict(previous_state.get("pending_data") or {})
+        current_data = dict(current.get("pending_data") or {})
+        previous_core = previous_data.copy()
+        current_core = current_data.copy()
+        previous_core.pop(CLARIFICATION_ATTEMPTS_KEY, None)
+        current_core.pop(CLARIFICATION_ATTEMPTS_KEY, None)
+        if current_core != previous_core:
+            # Например, пользователь назвал дату, но ещё не назвал время: это
+            # прогресс, а не неудачная попытка, поэтому счётчик не увеличиваем.
+            return result
+
+        attempts = int(previous_data.get(CLARIFICATION_ATTEMPTS_KEY, 0)) + 1
+        logger.warning(
+            "Ответ не продвинул уточнение",
+            extra={"session_id": sid, "action": "clarification_loop_guard",
+                   "pending_action": pending, "attempt": attempts},
+        )
+        if attempts >= MAX_CLARIFICATION_ATTEMPTS:
+            self.planner.set_session(sid, active_event_id=previous_state.get("active_event_id"))
+            messages = {
+                "confirm_cancel": "Не получилось подтвердить отмену. Событие оставлено без изменений. Если нужно, начни команду отмены заново.",
+                "select_event": "Не получилось выбрать запись. Уточнение завершено, ничего не изменено. Можешь назвать событие заново.",
+                "select_after_event": "Не получилось выбрать событие. Уточнение завершено. Можешь задать вопрос о расписании заново.",
+                "complete_command": "Не получилось уточнить детали. Создание остановлено, событие не сохранено. Можешь сформулировать запрос заново.",
+                "create_event": "Не получилось уточнить детали. Создание остановлено, событие не сохранено. Можешь сформулировать запрос заново.",
+            }
+            return ChatOutput(
+                answer=messages.get(pending, "Уточнение остановлено, изменения не применены. Попробуй сформулировать запрос заново."),
+                session_id=sid, action="cancel_pending",
+            )
+
+        current_data[CLARIFICATION_ATTEMPTS_KEY] = attempts
+        self.planner.set_session(
+            sid,
+            active_event_id=current.get("active_event_id"),
+            pending_action=pending,
+            pending_data=current_data,
+        )
+        result.answer = (
+            f"Я не понял ответ. {result.answer}\n"
+            "Можешь ответить коротко или написать «отмена», чтобы выйти из этого шага."
+        )
+        return result
 
     def _resolve_date_reference(self, text: str, state: dict) -> tuple[str, date | None]:
         """Resolve «на этот день» from the event discussed in the previous turn."""
@@ -394,7 +457,8 @@ class ChatRouter:
                     return ChatOutput(answer="Событие не отменено.", session_id=sid, action="cancel_pending")
                 return ChatOutput(answer="Ответь «да» или «нет» для подтверждения отмены.", session_id=sid, action="clarify")
             self.planner.set_session(sid, active_event_id=state.get("active_event_id"))
-            return self._execute(ParsedCommand.model_validate(data), sid, state, confirmed=True)
+            command_data = {key: value for key, value in data.items() if key != CLARIFICATION_ATTEMPTS_KEY}
+            return self._execute(ParsedCommand.model_validate(command_data), sid, state, confirmed=True)
 
         if pending == "select_after_event":
             ids = data["candidate_ids"]

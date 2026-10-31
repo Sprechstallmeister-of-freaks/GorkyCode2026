@@ -92,7 +92,9 @@ class RuleDialogue:
             # снимаем pending и отвечаем на вопрос.
             self.planner.set_session(sid, active_event_id=state["active_event_id"])
             return self._route(raw, s, sid, {**state, "pending_action": None})
-        data = dict(state["pending_data"])
+        # Служебный счётчик ChatRouter не является полем EventCreate.
+        data = {key: value for key, value in dict(state["pending_data"]).items()
+                if key != "_clarification_attempts"}
         parsed = parse_datetime(raw, tz=self.planner.default_timezone, now=self.clock())
         clock = parsed.clock
         if clock is None:

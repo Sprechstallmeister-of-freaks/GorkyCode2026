@@ -113,6 +113,60 @@ def test_cancel_requires_explicit_confirmation(planner):
     assert planner.get(event.id).status.value == "cancelled"
 
 
+def test_informal_answers_abort_complete_command_after_retry(planner):
+    fake = FakeProvider(ParsedCommand(tool="create_event", arguments={
+        "kind": "meeting", "title": "Созвон с Иваном",
+    }))
+    router = ChatRouter(planner, provider=fake)
+    assert router.process("Хочу созвониться с Иваном", "loop").action == "clarify"
+
+    retry = router.process("сам решай", "loop")
+    assert retry.action == "clarify"
+    assert "Я не понял ответ" in retry.answer
+    assert planner.get_session("loop")["pending_action"] == "complete_command"
+
+    stopped = router.process("не знаю", "loop")
+    assert stopped.action == "cancel_pending"
+    assert "не сохранено" in stopped.answer
+    assert planner.get_session("loop")["pending_action"] is None
+    assert planner.list()[1] == 0
+    assert fake.interpret_calls == 1
+
+
+def test_confirmation_works_after_one_informal_answer(planner):
+    event = planner.create(EventCreate(kind="task", title="Удалить протокол"))
+    fake = FakeProvider(ParsedCommand(tool="cancel_event", arguments={"event_id": event.id}))
+    router = ChatRouter(planner, provider=fake)
+    assert router.process("Убери протокол", "confirm-loop").action == "clarify"
+
+    assert router.process("возможно", "confirm-loop").action == "clarify"
+    confirmed = router.process("да", "confirm-loop")
+    assert confirmed.action == "cancel_event"
+    assert planner.get(event.id).status.value == "cancelled"
+
+
+def test_rule_pending_also_stops_after_repeated_informal_answers(planner):
+    router = ChatRouter(planner, provider=FakeProvider())
+    assert router.process("Добавь встречу с командой завтра", "rule-loop").action == "clarify"
+
+    assert router.process("не знаю", "rule-loop").action == "clarify"
+    stopped = router.process("всё равно", "rule-loop")
+    assert stopped.action == "cancel_pending"
+    assert planner.get_session("rule-loop")["pending_action"] is None
+    assert planner.list()[1] == 0
+
+
+def test_rule_pending_can_finish_after_one_informal_answer(planner):
+    router = ChatRouter(planner, provider=FakeProvider())
+    assert router.process("Добавь встречу с командой завтра", "rule-resume").action == "clarify"
+    assert router.process("не знаю", "rule-resume").action == "clarify"
+
+    created = router.process("в 15:00", "rule-resume")
+    assert created.action == "create"
+    assert created.event.scheduled_time.strftime("%H:%M") == "15:00"
+    assert planner.get_session("rule-resume")["pending_action"] is None
+
+
 def test_search_expansion_using_db(planner):
     planner.create(EventCreate(kind="task", title="Обсуждение зарплаты с руководителем"))
     fake = FakeProvider(ParsedCommand(tool="search_events", arguments={"query": "повышение"}),
