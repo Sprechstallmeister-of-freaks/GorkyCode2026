@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import CalendarPanel from './components/CalendarPanel.jsx'
 import ChatPanel from './components/ChatPanel.jsx'
-import { IconBell, IconBellOff, IconCalendar, IconChat } from './components/icons.jsx'
+import { IconBell, IconBellOff, IconCalendar, IconChat, IconRefresh } from './components/icons.jsx'
 import { api } from './api/client.js'
+import {
+  getNotificationPermission,
+  showEventNotification,
+  showTestNotification,
+} from './services/notifications.js'
 
 const POLL_INTERVAL_MS = 60_000 // проверять наступление событий каждую минуту
 
@@ -16,100 +21,126 @@ function getSessionId() {
   return id
 }
 
+function notificationErrorText(error) {
+  const detail = error instanceof Error ? error.message : String(error)
+  return `Не удалось проверить или показать уведомление. ${detail}`
+}
+
 export default function App() {
   const [sessionId] = useState(getSessionId)
   const [eventsVersion, setEventsVersion] = useState(0)
   const [tab, setTab] = useState('calendar')
   const [health, setHealth] = useState(null)
 
-  // Состояние браузерных уведомлений
-  const [notificationPermission, setNotificationPermission] = useState(
-    () => (typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'),
-  )
-  const [supported, setSupported] = useState(
-    () => typeof Notification !== 'undefined' && typeof document !== 'undefined',
-  )
-  const [dueCount, setDueCount] = useState(0)
+  const [notificationPermission, setNotificationPermission] = useState(getNotificationPermission)
   const [pollStatus, setPollStatus] = useState('idle') // idle | checking | error
-  const [lastPollError, setLastPollError] = useState(null)
-  const pollTimer = useRef(null)
+  const [notificationError, setNotificationError] = useState(null)
+  const pollInFlight = useRef(false)
+
+  const notificationsSupported = notificationPermission !== 'unsupported'
+  const canNotify = notificationPermission === 'granted'
 
   useEffect(() => {
     api.health().then(setHealth).catch(() => setHealth(null))
   }, [eventsVersion])
 
-  // Браузерные уведомления: опрос сервера о наступлении времени событий.
+  // Опрос продолжается и в скрытой вкладке. Браузер может замедлять таймеры,
+  // поэтому при возвращении на страницу дополнительно проверяем события сразу.
   const pollNotifications = useCallback(async () => {
-    if (!supported || notificationPermission !== 'granted') return
-    if (document.visibilityState !== 'visible') return
+    const actualPermission = getNotificationPermission()
+    if (actualPermission !== 'granted') {
+      setNotificationPermission(actualPermission)
+      return
+    }
+    if (pollInFlight.current) return
+
+    pollInFlight.current = true
     setPollStatus('checking')
-    setLastPollError(null)
+    setNotificationError(null)
     try {
       const data = await api.getDueNotifications()
-      if (data.count > 0) {
-        setDueCount((c) => c + data.count)
-        data.items.forEach((event) => {
-          const when = event.scheduled_date
-            ? `${event.scheduled_date}${event.scheduled_time ? ` в ${event.scheduled_time.slice(0, 5)}` : ''}`
-            : ''
-          new Notification(`Ритм: ${event.title}`, {
-            body: when || 'Наступило время события',
-            tag: `ritm-event-${event.id}`,
-          })
-        })
+      let displayFailed = false
+      for (const event of data.items) {
+        try {
+          await showEventNotification(event)
+        } catch (error) {
+          console.error('Не удалось показать уведомление о событии', event.id, error)
+          displayFailed = true
+        }
+      }
+      if (displayFailed) {
+        throw new Error('Проверьте разрешение уведомлений для этого сайта.')
       }
       setPollStatus('idle')
-    } catch (e) {
+    } catch (error) {
       setPollStatus('error')
-      setLastPollError(e instanceof Error ? e.message : String(e))
-      // Тихая ошибка опроса — не прерываем работу приложения.
-    }
-  }, [supported, notificationPermission])
-
-  const startPolling = useCallback(() => {
-    if (pollTimer.current) return
-    pollNotifications()
-    pollTimer.current = setInterval(pollNotifications, POLL_INTERVAL_MS)
-  }, [pollNotifications])
-
-  const stopPolling = useCallback(() => {
-    if (pollTimer.current) {
-      clearInterval(pollTimer.current)
-      pollTimer.current = null
+      setNotificationError(notificationErrorText(error))
+      // Ошибка опроса не прерывает работу остального приложения.
+    } finally {
+      pollInFlight.current = false
     }
   }, [])
 
-  // Опрашиваем только когда вкладка видима и разрешение дано.
   useEffect(() => {
-    if (notificationPermission !== 'granted') return
-    startPolling()
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') startPolling()
-      else stopPolling()
-    }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-      stopPolling()
-    }
-  }, [notificationPermission, startPolling, stopPolling])
+    if (notificationPermission !== 'granted') return undefined
 
-  const requestPermission = async () => {
-    if (!supported) return
+    const check = () => { void pollNotifications() }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') check()
+    }
+
+    check()
+    const timer = window.setInterval(check, POLL_INTERVAL_MS)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('focus', check)
+    window.addEventListener('pageshow', check)
+    window.addEventListener('online', check)
+
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('focus', check)
+      window.removeEventListener('pageshow', check)
+      window.removeEventListener('online', check)
+    }
+  }, [notificationPermission, pollNotifications])
+
+  const enableOrTestNotifications = async () => {
+    setNotificationError(null)
+    const currentPermission = getNotificationPermission()
+    if (currentPermission === 'unsupported') return
+    if (currentPermission === 'denied') {
+      setNotificationError('Уведомления заблокированы. Разрешите их в настройках этого сайта в браузере.')
+      return
+    }
+
     try {
-      const permission = await Notification.requestPermission()
+      const permission = currentPermission === 'default'
+        ? await Notification.requestPermission()
+        : currentPermission
       setNotificationPermission(permission)
-      if (permission === 'granted') {
-        startPolling()
+      if (permission === 'denied') {
+        setNotificationError('Уведомления заблокированы. Разрешите их в настройках этого сайта в браузере.')
+        return
       }
-    } catch (e) {
-      // Браузер может заблокировать запрос вне действия пользователя.
+      if (permission !== 'granted') return
+
+      // Тест сразу проверяет и разрешение, и регистрацию Service Worker.
+      await showTestNotification()
+      await pollNotifications()
+    } catch (error) {
+      setPollStatus('error')
+      setNotificationError(notificationErrorText(error))
     }
   }
 
   const refreshEvents = () => setEventsVersion((v) => v + 1)
 
-  const canNotify = supported && notificationPermission === 'granted'
+  const notificationBlockReason = !notificationsSupported
+    ? 'Браузер не поддерживает уведомления либо сайт открыт без защищённого HTTPS-соединения.'
+    : notificationPermission === 'denied'
+      ? 'Уведомления заблокированы. Разрешите их в настройках этого сайта в браузере.'
+      : null
 
   return (
     <div className="app">
@@ -129,43 +160,47 @@ export default function App() {
         </div>
         <div className="header-actions">
           <button
+            type="button"
             className={`icon-btn notification-toggle ${canNotify ? 'active' : ''}`}
-            onClick={requestPermission}
+            onClick={enableOrTestNotifications}
+            aria-label={canNotify ? 'Проверить браузерное уведомление' : 'Включить уведомления о событиях'}
             title={canNotify
-              ? 'Уведомления включены'
+              ? 'Уведомления включены. Нажмите для теста'
               : notificationPermission === 'denied'
                 ? 'Уведомления заблокированы браузером'
                 : 'Включить уведомления о событиях'}
-            disabled={notificationPermission === 'denied'}
+            disabled={!notificationsSupported}
           >
-            {supported ? (
+            {notificationsSupported ? (
               <>{canNotify ? <IconBell /> : <IconBellOff />}</>
             ) : (
               <span>—</span>
             )}
           </button>
           <button
+            type="button"
             className={`icon-btn notification-check ${pollStatus === 'checking' ? 'checking' : ''}`}
-            onClick={pollNotifications}
+            onClick={() => { void pollNotifications() }}
+            aria-label="Проверить наступившие события"
             title={
               pollStatus === 'checking'
                 ? 'Проверяем уведомления…'
                 : pollStatus === 'error'
-                  ? 'Ошибка проверки: ' + lastPollError
+                  ? `Ошибка проверки: ${notificationError || 'неизвестная ошибка'}`
                   : 'Проверить уведомления сейчас'
             }
             disabled={!canNotify || pollStatus === 'checking'}
           >
-            {pollStatus === 'checking' ? '⟳' : '?'}
+            <IconRefresh />
           </button>
-          {dueCount > 0 && canNotify && (
-            <span className="badge badge-notice">{dueCount}</span>
-          )}
-          {!supported && (
-            <span className="badge badge-notice" title="Уведомления не поддерживаются браузером">—</span>
-          )}
         </div>
       </header>
+
+      {(notificationError || notificationBlockReason) && (
+        <div className="notification-feedback" role="status">
+          {notificationError || notificationBlockReason}
+        </div>
+      )}
 
       <nav className="mobile-tabs" aria-label="Разделы">
         <button className={tab === 'calendar' ? 'active' : ''} onClick={() => setTab('calendar')}>

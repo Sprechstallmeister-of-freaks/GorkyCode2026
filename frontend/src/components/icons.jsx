@@ -107,3 +107,13 @@ export function IconBellOff({ size = 18 }) {
     </svg>
   )
 }
+
+export function IconRefresh({ size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 7v5h-5" />
+      <path d="M4 17v-5h5" />
+      <path d="M6.1 8a7 7 0 0 1 11.4-2.1L20 8M4 16l2.5 2.1A7 7 0 0 0 17.9 16" />
+    </svg>
+  )
+}

@@ -4,6 +4,11 @@ def test_health_and_docs(client):
     assert client.get('/').status_code==200
     assert client.get('/docs').status_code==200
     assert len(client.get('/api/tools').json()['tools'])==6
+    worker = client.get('/sw.js')
+    assert worker.status_code == 200
+    assert worker.headers['content-type'].startswith('application/javascript')
+    assert worker.headers['cache-control'] == 'no-cache'
+    assert 'notificationclick' in worker.text
 
 
 def test_crud(client):

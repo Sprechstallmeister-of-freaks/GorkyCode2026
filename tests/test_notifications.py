@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from zoneinfo import ZoneInfo
 
-from assistant.database import Database
+from assistant.database import Database, SCHEMA_VERSION
 from assistant.models import EventCreate, Kind
 from assistant.notifications import NotificationSettings, due_events
 from assistant.service import Planner
@@ -16,6 +16,12 @@ NOW_UTC = datetime(2026, 10, 30, 10, 0, tzinfo=UTC)  # 13:00 по Москве
 
 def make_planner(tmp_path):
     return Planner(Database(tmp_path / "test.db"), "Europe/Moscow")
+
+
+def test_fresh_database_uses_current_schema_version(tmp_path):
+    db = Database(tmp_path / "fresh.db")
+    with db.connect() as cx:
+        assert cx.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
 
 def test_due_event_returned_once_and_marked(tmp_path):

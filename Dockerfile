@@ -2,7 +2,8 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    ASSISTANT_DB=/data/assistant.db
+    ASSISTANT_DB=/data/assistant.db \
+    HOST=0.0.0.0
 
 WORKDIR /app
 
@@ -14,5 +15,5 @@ COPY . .
 
 EXPOSE 8000
 
-# Без ключа api работает офлайн rule-диалог.
-CMD ["uvicorn", "assistant.api:app", "--host", "0.0.0.0", "--port", "8000"]
+# run.py учитывает назначенный Render порт PORT; без ключа API работает rule-диалог.
+CMD ["python", "run.py"]

@@ -332,6 +332,16 @@ def create_app(settings: Settings | None = None, *, llm_provider: LLMProvider | 
     def tool_specs():
         return {"tools": tools.specs(), "note": "Static schemas for LLM tool calling. Execution is internal, not a public arbitrary-tool endpoint."}
 
+    @app.get("/sw.js", include_in_schema=False)
+    def service_worker():
+        # Service Worker должен быть в корне origin, чтобы управлять страницей `/`.
+        # no-cache позволяет браузеру своевременно получать новые версии файла.
+        return FileResponse(
+            PROJECT_ROOT / "web" / "sw.js",
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache"},
+        )
+
     @app.get("/", include_in_schema=False)
     def index():
         return FileResponse(PROJECT_ROOT / "web" / "index.html", media_type="text/html")

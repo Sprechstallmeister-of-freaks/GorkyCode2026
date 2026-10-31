@@ -167,6 +167,47 @@ h1, h2, h3, p { margin: 0; }
 .icon-btn.subtle { width: 28px; height: 28px; }
 .icon-btn.danger:hover { background: rgba(255, 59, 48, 0.1); color: var(--danger); }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 16px;
+}
+
+.notification-toggle,
+.notification-check {
+  position: relative;
+  color: var(--secondary);
+}
+
+.notification-toggle.active { color: var(--accent); }
+
+.notification-toggle[disabled],
+.notification-check[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.notification-check.checking svg {
+  color: var(--accent);
+  animation: spin 1s linear infinite;
+}
+
+.notification-feedback {
+  margin: -8px 0 18px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 149, 0, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 149, 0, 0.09);
+  color: #9a5b00;
+  font-size: 13px;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* ---------- Календарь ---------- */
 
 .calendar-panel { display: flex; flex-direction: column; height: calc(100vh - 152px); min-height: 540px; }
@@ -666,68 +707,7 @@ h1, h2, h3, p { margin: 0; }
   .calendar-panel, .chat-panel { height: calc(100dvh - 210px); min-height: 440px; }
   .event-actions { opacity: 1; }
 
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-left: 16px;
-  }
-
-  .notification-toggle {
-    position: relative;
-    color: var(--secondary);
-  }
-
-  .notification-toggle.active {
-    color: var(--accent);
-  }
-
-  .notification-toggle.disabled,
-  .notification-toggle[disabled] {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 20px;
-    height: 20px;
-    padding: 0 6px;
-    border-radius: 10px;
-    background: var(--accent);
-    color: #fff;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1;
-    margin-left: 6px;
-  }
-
-  .badge-notice {
-    background: #e11d48;
-  }
-
-  .notification-check {
-    position: relative;
-    color: var(--secondary);
-    font-size: 14px;
-  }
-
-  .notification-check.checking {
-    color: var(--accent);
-    animation: spin 1s linear infinite;
-  }
-
-  .notification-check[disabled] {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-  }
+  .header-actions { margin-left: 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

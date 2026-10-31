@@ -82,7 +82,7 @@ class Database:
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
-                PRAGMA user_version=1;
+                PRAGMA user_version=2;
                 """)
             if v == 1:
                 # Миграция 1 -> 2: колонка уведомлений о наступлении времени события.
